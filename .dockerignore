@@ -1,11 +1,18 @@
-target/
-.git/
+# Anything not needed to build the image. Keeps the build context small and
+# stops local secrets or IDE state from being copied into a layer.
+.git
+.github
 .gitignore
-.idea/
-*.iml
-.vscode/
-README.md
+.dockerignore
+target/
+k8s/
 docs/
-screenshots/
-*.log
-.DS_Store
+*.md
+!README.md
+.idea/
+.vscode/
+*.iml
+.env
+.env.*
+docker-compose*.yml
+Makefile

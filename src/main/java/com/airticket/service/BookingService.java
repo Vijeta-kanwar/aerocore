@@ -1,71 +1,121 @@
 package com.airticket.service;
 
+import com.airticket.dto.BookingRequest;
+import com.airticket.exception.BookingAlreadyCancelledException;
+import com.airticket.exception.InsufficientSeatsException;
+import com.airticket.exception.ResourceNotFoundException;
 import com.airticket.model.Booking;
 import com.airticket.model.Flight;
 import com.airticket.repository.BookingRepository;
 import com.airticket.repository.FlightRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
-import java.util.Optional;
 
 @Service
+@Transactional(readOnly = true)
 public class BookingService {
 
-    @Autowired
-    private BookingRepository bookingRepository;
+    private final BookingRepository bookingRepository;
+    private final FlightRepository flightRepository;
+    private final BookingReferenceGenerator referenceGenerator;
 
-    @Autowired
-    private FlightRepository flightRepository;
+    public BookingService(BookingRepository bookingRepository,
+                          FlightRepository flightRepository,
+                          BookingReferenceGenerator referenceGenerator) {
+        this.bookingRepository = bookingRepository;
+        this.flightRepository = flightRepository;
+        this.referenceGenerator = referenceGenerator;
+    }
 
-    public List<Booking> getAllBookings() {
+    public List<Booking> findAll() {
         return bookingRepository.findAll();
     }
 
-    public Optional<Booking> getBookingById(Long id) {
-        return bookingRepository.findById(id);
+    public Booking findById(Long id) {
+        return bookingRepository.findById(id)
+                .orElseThrow(() -> ResourceNotFoundException.booking(id));
     }
 
-    public Booking createBooking(Booking booking) {
-        Flight flight = flightRepository.findById(booking.getFlightId())
-                .orElseThrow(() -> new RuntimeException("Flight not found"));
+    public Booking findByReference(String reference) {
+        return bookingRepository.findByReference(reference)
+                .orElseThrow(() -> new ResourceNotFoundException("No booking exists with reference " + reference));
+    }
 
-        if (flight.getAvailableSeats() < booking.getSeatsBooked()) {
-            throw new RuntimeException("Not enough available seats");
+    public List<Booking> findByEmail(String email) {
+        return bookingRepository.findByPassengerEmailIgnoreCaseOrderByBookedAtDesc(email.trim());
+    }
+
+    /**
+     * Reserving a seat is read-then-write on a shared counter, so the whole operation
+     * runs in one transaction and takes a row lock on the flight first. Any other
+     * replica attempting the same flight blocks until this commits.
+     */
+    @Transactional
+    public Booking create(BookingRequest request) {
+        Flight flight = flightRepository.findByIdForUpdate(request.flightId())
+                .orElseThrow(() -> ResourceNotFoundException.flight(request.flightId()));
+
+        if (!flight.hasSeatsFor(request.seatsBooked())) {
+            throw new InsufficientSeatsException(request.seatsBooked(), flight.getAvailableSeats());
         }
 
-        // Calculate total amount
-        booking.setTotalAmount(flight.getPrice() * booking.getSeatsBooked());
+        // No explicit save: flight is a managed entity inside this transaction, so the
+        // seat decrement is flushed by dirty checking at commit — atomically with the
+        // booking insert below.
+        flight.reserveSeats(request.seatsBooked());
 
-        // Decrease available seats
-        flight.setAvailableSeats(flight.getAvailableSeats() - booking.getSeatsBooked());
-        flightRepository.save(flight);
+        BigDecimal total = flight.getPrice().multiply(BigDecimal.valueOf(request.seatsBooked()));
 
-        booking.setBookingStatus("CONFIRMED");
+        Booking booking = new Booking(
+                nextReference(),
+                flight,
+                request.passengerName().trim(),
+                request.passengerEmail().trim().toLowerCase(),
+                request.passengerPhone().trim(),
+                request.seatsBooked(),
+                total);
+
         return bookingRepository.save(booking);
     }
 
-    public Booking cancelBooking(Long id) {
-        Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Booking not found"));
+    @Transactional
+    public Booking cancel(Long id) {
+        Booking booking = findById(id);
 
-        // Restore seats
-        Flight flight = flightRepository.findById(booking.getFlightId()).orElse(null);
-        if (flight != null) {
-            flight.setAvailableSeats(flight.getAvailableSeats() + booking.getSeatsBooked());
-            flightRepository.save(flight);
+        if (booking.isCancelled()) {
+            throw new BookingAlreadyCancelledException(booking.getReference());
         }
 
-        booking.setBookingStatus("CANCELLED");
-        return bookingRepository.save(booking);
+        // Lock the flight before touching its seat counter, same reasoning as create().
+        Flight flight = flightRepository.findByIdForUpdate(booking.getFlight().getId())
+                .orElseThrow(() -> ResourceNotFoundException.flight(booking.getFlight().getId()));
+
+        // Both entities are managed here; the seat credit and the status change commit together.
+        flight.releaseSeats(booking.getSeatsBooked());
+        booking.cancel();
+
+        return booking;
     }
 
-    public void deleteBooking(Long id) {
-        bookingRepository.deleteById(id);
+    @Transactional
+    public void delete(Long id) {
+        Booking booking = findById(id);
+        if (!booking.isCancelled()) {
+            Flight flight = flightRepository.findByIdForUpdate(booking.getFlight().getId())
+                    .orElseThrow(() -> ResourceNotFoundException.flight(booking.getFlight().getId()));
+            flight.releaseSeats(booking.getSeatsBooked());
+        }
+        bookingRepository.delete(booking);
     }
 
-    public List<Booking> getBookingsByEmail(String email) {
-        return bookingRepository.findByPassengerEmail(email);
+    private String nextReference() {
+        String reference = referenceGenerator.generate();
+        while (bookingRepository.existsByReference(reference)) {
+            reference = referenceGenerator.generate();
+        }
+        return reference;
     }
 }

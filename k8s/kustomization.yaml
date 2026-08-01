@@ -1,0 +1,23 @@
+# Everything applies with a single command: kubectl apply -k k8s/
+# CI rewrites the image tag with: kustomize edit set image airticket-app=...
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: airticket
+
+resources:
+  - namespace.yaml
+  - postgres/secret.yaml
+  - postgres/service.yaml
+  - postgres/statefulset.yaml
+  - app/configmap.yaml
+  - app/deployment.yaml
+  - app/service.yaml
+  - app/hpa.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: airticket-booking-system
+
+images:
+  - name: ghcr.io/vijeta-kanwar/air_ticket_system
+    newTag: latest

@@ -1,0 +1,69 @@
+# StatefulSet, not Deployment: the database needs stable identity and a volume
+# that survives rescheduling. This is what makes replicas > 1 on the app honest —
+# every pod now reads and writes the same data.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: airticket-db
+  labels:
+    app.kubernetes.io/name: airticket
+    app.kubernetes.io/component: database
+spec:
+  serviceName: airticket-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: airticket
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: airticket
+        app.kubernetes.io/component: database
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: airticket-db-credentials
+          env:
+            # Postgres refuses to initialise into a non-empty mount root, so data
+            # lives in a subdirectory of the volume.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
