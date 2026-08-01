@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Vijeta-kanwar/air_ticket_system/actions/workflows/ci.yml/badge.svg)](https://github.com/Vijeta-kanwar/air_ticket_system/actions/workflows/ci.yml)
 
-![AirTicket booking interface](/Users/vijetakanwar/Desktop/pic.png)
+![AirTicket booking interface](pic.png)
 
 A Spring Boot service for searching flights and reserving seats, backed by PostgreSQL,
 containerised, and deployed to Kubernetes with a CI pipeline that tests, builds and
