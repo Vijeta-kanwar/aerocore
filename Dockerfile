@@ -1,56 +1,49 @@
-# =====================================================
-# Multi-stage Dockerfile for Air Ticket Booking System
-# =====================================================
+# syntax=docker/dockerfile:1
 
-# Stage 1: Build the application using Maven
-FROM maven:3.9.5-eclipse-temurin-17 AS builder
-
-LABEL maintainer="DevOps Team <devops@airticket.com>"
-LABEL description="Air Ticket Booking System - Build Stage"
+# ---------- Stage 1: build ----------
+FROM maven:3.9-eclipse-temurin-17 AS builder
 
 WORKDIR /build
 
-# Copy pom.xml first to leverage Docker layer caching
+# pom.xml alone first: dependency resolution re-runs only when dependencies change,
+# not on every source edit.
 COPY pom.xml .
-RUN mvn dependency:go-offline -B
+RUN --mount=type=cache,target=/root/.m2 mvn -B dependency:go-offline
 
-# Copy source code and build
 COPY src ./src
-RUN mvn clean package -DskipTests -B
+RUN --mount=type=cache,target=/root/.m2 mvn -B clean package -DskipTests
 
-# Stage 2: Create the runtime image
-FROM eclipse-temurin:17-jre-alpine
+# Split the fat jar into layers ordered by how often they change, so a code-only
+# change pushes a few hundred KB instead of the whole image.
+RUN java -Djarmode=layertools -jar target/airticket-booking-system.jar extract --destination extracted
 
-LABEL maintainer="DevOps Team <devops@airticket.com>"
-LABEL description="Air Ticket Booking System - Runtime"
-LABEL version="1.0.0"
+# ---------- Stage 2: runtime ----------
+FROM eclipse-temurin:17-jre-jammy
 
-# Install wget for health checks
-RUN apk add --no-cache wget
-
-# Create non-root user for security
-RUN addgroup -S airticketapp && adduser -S airticketuser -G airticketapp
+# Debian base, so Debian tooling: apt-get / groupadd / useradd.
+# (Mixing Alpine commands with a Debian base is exactly the bug that broke v1 of this file.)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -g 1000 airticket \
+ && useradd -u 1000 -g airticket -m -s /usr/sbin/nologin airticket
 
 WORKDIR /app
 
-# Copy the built JAR from the builder stage
-COPY --from=builder /build/target/airticket-booking-system.jar app.jar
+COPY --from=builder --chown=airticket:airticket /build/extracted/dependencies/ ./
+COPY --from=builder --chown=airticket:airticket /build/extracted/spring-boot-loader/ ./
+COPY --from=builder --chown=airticket:airticket /build/extracted/snapshot-dependencies/ ./
+COPY --from=builder --chown=airticket:airticket /build/extracted/application/ ./
 
-# Change ownership
-RUN chown -R airticketuser:airticketapp /app
+USER airticket
 
-# Switch to non-root user
-USER airticketuser
-
-# Expose application port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/flights/health || exit 1
+# MaxRAMPercentage sizes the heap from the container's memory limit instead of a
+# hardcoded -Xmx that must be kept in sync with the k8s manifest.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
 
-# Set JVM options
-ENV JAVA_OPTS="-Xms256m -Xmx512m"
+HEALTHCHECK --interval=30s --timeout=3s --start-period=45s --retries=3 \
+  CMD curl -fsS http://localhost:8080/actuator/health/liveness || exit 1
 
-# Run the application
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS org.springframework.boot.loader.launch.JarLauncher"]

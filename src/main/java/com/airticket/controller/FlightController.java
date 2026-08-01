@@ -1,67 +1,78 @@
 package com.airticket.controller;
 
-import com.airticket.model.Flight;
+import com.airticket.dto.FlightRequest;
+import com.airticket.dto.FlightResponse;
 import com.airticket.service.FlightService;
-import org.springframework.beans.factory.annotation.Autowired;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.UriComponentsBuilder;
 
-import java.util.HashMap;
+import java.net.URI;
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/flights")
-@CrossOrigin(origins = "*")
+@Validated
+@Tag(name = "Flights", description = "Search and manage the flight schedule")
 public class FlightController {
 
-    @Autowired
-    private FlightService flightService;
+    private final FlightService flightService;
+
+    public FlightController(FlightService flightService) {
+        this.flightService = flightService;
+    }
 
     @GetMapping
-    public List<Flight> getAllFlights() {
-        return flightService.getAllFlights();
-    }
-
-    @GetMapping("/{id}")
-    public ResponseEntity<Flight> getFlightById(@PathVariable Long id) {
-        return flightService.getFlightById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
-    }
-
-    @PostMapping
-    public Flight createFlight(@RequestBody Flight flight) {
-        return flightService.saveFlight(flight);
-    }
-
-    @PutMapping("/{id}")
-    public ResponseEntity<Flight> updateFlight(@PathVariable Long id, @RequestBody Flight flight) {
-        try {
-            return ResponseEntity.ok(flightService.updateFlight(id, flight));
-        } catch (RuntimeException e) {
-            return ResponseEntity.notFound().build();
-        }
-    }
-
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Map<String, String>> deleteFlight(@PathVariable Long id) {
-        flightService.deleteFlight(id);
-        Map<String, String> response = new HashMap<>();
-        response.put("message", "Flight deleted successfully");
-        return ResponseEntity.ok(response);
+    @Operation(summary = "List every flight in the schedule")
+    public List<FlightResponse> list() {
+        return flightService.findAll().stream().map(FlightResponse::from).toList();
     }
 
     @GetMapping("/search")
-    public List<Flight> searchFlights(@RequestParam String source, @RequestParam String destination) {
-        return flightService.searchFlights(source, destination);
+    @Operation(summary = "Find flights on a route")
+    public List<FlightResponse> search(@RequestParam @NotBlank String origin,
+                                       @RequestParam @NotBlank String destination) {
+        return flightService.search(origin, destination).stream().map(FlightResponse::from).toList();
     }
 
-    @GetMapping("/health")
-    public Map<String, String> healthCheck() {
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "UP");
-        response.put("service", "Air Ticket Booking System");
-        return response;
+    @GetMapping("/{id}")
+    @Operation(summary = "Fetch one flight by id")
+    public FlightResponse get(@PathVariable Long id) {
+        return FlightResponse.from(flightService.findById(id));
+    }
+
+    @PostMapping
+    @Operation(summary = "Add a flight to the schedule")
+    public ResponseEntity<FlightResponse> create(@Valid @RequestBody FlightRequest request,
+                                                 UriComponentsBuilder uriBuilder) {
+        FlightResponse created = FlightResponse.from(flightService.create(request));
+        URI location = uriBuilder.path("/api/flights/{id}").buildAndExpand(created.id()).toUri();
+        return ResponseEntity.created(location).body(created);
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Replace a flight's details")
+    public FlightResponse update(@PathVariable Long id, @Valid @RequestBody FlightRequest request) {
+        return FlightResponse.from(flightService.update(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Remove a flight from the schedule")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        flightService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }

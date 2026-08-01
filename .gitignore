@@ -1,38 +1,25 @@
-# Compiled class files
-*.class
-
-# Maven
+# Build output
 target/
-*.jar
-*.war
-!**/src/main/**/*.jar
-!**/src/test/**/*.jar
+!.mvn/wrapper/maven-wrapper.jar
 
-# IDE files
+# Local environment
+.env
+.env.local
+
+# IDE
 .idea/
 *.iml
+*.ipr
 *.iws
 .vscode/
-.project
-.classpath
 .settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Logs
 *.log
 logs/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Build outputs
-build/
-out/
-dist/
-
-# Environment files
-.env
-.env.local
-
-# Ansible
-*.retry

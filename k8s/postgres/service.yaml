@@ -1,0 +1,18 @@
+# Headless service: gives the StatefulSet pod a stable DNS name
+# (airticket-db-0.airticket-db.airticket.svc.cluster.local).
+apiVersion: v1
+kind: Service
+metadata:
+  name: airticket-db
+  labels:
+    app.kubernetes.io/name: airticket
+    app.kubernetes.io/component: database
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: airticket
+    app.kubernetes.io/component: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

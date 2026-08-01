@@ -1,268 +1,265 @@
-# ✈ Air Ticket Booking Management System - Complete CI/CD Pipeline
+# AirTicket — flight search and seat booking
 
-A complete Air Ticket Booking Management System built with Spring Boot, demonstrating an end-to-end DevOps CI/CD pipeline using **Git, Jenkins, Maven, Docker, Kubernetes,** and **Ansible**.
+[![CI](https://github.com/Vijeta-kanwar/air_ticket_system/actions/workflows/ci.yml/badge.svg)](https://github.com/Vijeta-kanwar/air_ticket_system/actions/workflows/ci.yml)
 
-## 🎯 Project Overview
+![AirTicket booking interface](/Users/vijetakanwar/Desktop/pic.jpg.png)
 
-This project implements a full CI/CD automation pipeline that takes an air ticket booking application from source code commit all the way to production deployment in a Kubernetes cluster, with no manual intervention.
+A Spring Boot service for searching flights and reserving seats, backed by PostgreSQL,
+containerised, and deployed to Kubernetes with a CI pipeline that tests, builds and
+publishes the image on every push to `main`.
 
-## 🏗️ Architecture
+The interesting part isn't the CRUD. It's that reserving a seat is a read-then-write on
+a shared counter, and the app runs three replicas — so the booking path is written to be
+correct under concurrency rather than merely to work when one person clicks at a time.
 
-```
-Developer → Git Push → Jenkins Trigger
-                         ↓
-                    Maven Build
-                         ↓
-                    Unit Tests (JUnit)
-                         ↓
-                    Package JAR
-                         ↓
-                    Docker Image Build
-                         ↓
-                    Push to Docker Registry
-                         ↓
-                    Ansible Automation
-                         ↓
-                    Kubernetes Deployment
-                         ↓
-                ✈ Booking System Live (3 Pods)
-```
+---
 
-## 🛠️ Tech Stack
+## Run it
 
-| Layer | Technology |
-|-------|-----------|
-| **Application** | Java 17, Spring Boot 3.2 |
-| **Database** | H2 (In-Memory) |
-| **Version Control** | Git / GitHub |
-| **CI/CD** | Jenkins |
-| **Build Tool** | Apache Maven |
-| **Containerization** | Docker |
-| **Orchestration** | Kubernetes |
-| **Configuration Mgmt** | Ansible |
+One command, nothing to install beyond Docker:
 
-## 📁 Project Structure
-
-```
-airticket-booking-system/
-├── src/                              # Application source code
-│   ├── main/java/com/airticket/
-│   │   ├── AirTicketBookingApplication.java
-│   │   ├── controller/               # REST API controllers
-│   │   │   ├── FlightController.java
-│   │   │   ├── BookingController.java
-│   │   │   └── HomeController.java
-│   │   ├── model/                    # JPA entity models
-│   │   │   ├── Flight.java
-│   │   │   └── Booking.java
-│   │   ├── repository/               # JPA repositories
-│   │   └── service/                  # Business logic
-│   ├── main/resources/
-│   │   ├── application.properties
-│   │   └── data.sql
-│   └── test/java/                    # JUnit tests
-├── k8s/                              # Kubernetes manifests
-│   ├── namespace.yaml
-│   ├── deployment.yaml
-│   ├── service.yaml
-│   ├── configmap.yaml
-│   └── hpa.yaml
-├── ansible/                          # Ansible automation
-│   ├── inventory.ini
-│   ├── deploy-playbook.yml
-│   └── setup-prerequisites.yml
-├── Dockerfile                        # Container image definition
-├── Jenkinsfile                       # CI/CD pipeline definition
-├── pom.xml                           # Maven build file
-├── .gitignore
-├── .dockerignore
-└── README.md
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Java 17+
-- Maven 3.9+
-- Docker 20+
-- Kubernetes (Minikube/kind/k3s)
-- Ansible 2.9+
-- Jenkins 2.400+
-
-### 1️⃣ Clone the Repository
 ```bash
-git clone https://github.com/<your-username>/airticket-booking-system.git
-cd airticket-booking-system
+docker compose up --build
 ```
 
-### 2️⃣ Build with Maven
-```bash
-mvn clean package
+Then open **http://localhost:8080**.
+
+| What | Where |
+| --- | --- |
+| Booking UI | http://localhost:8080 |
+| API reference (Swagger) | http://localhost:8080/swagger-ui.html |
+| Health | http://localhost:8080/actuator/health |
+
+The database is seeded with ten flights on real Indian routes, so there is something to
+search the moment it starts.
+
+To stop and wipe the database volume: `docker compose down -v`
+
+---
+
+## Architecture
+
+```
+                        ┌──────────────────────────────┐
+   push to main ───────▶│  GitHub Actions              │
+                        │  test → smoke → publish      │
+                        └───────────────┬──────────────┘
+                                        │ image
+                                        ▼
+                              ghcr.io/…/air_ticket_system
+                                        │
+                                        │ kubectl apply -k k8s/
+                                        ▼
+   ┌────────────────────────────────────────────────────────────┐
+   │  namespace: airticket                                      │
+   │                                                            │
+   │   Service (NodePort 30080)                                 │
+   │        │                                                   │
+   │        ├──▶ Pod ─┐                                         │
+   │        ├──▶ Pod ─┼──▶ Service ──▶ StatefulSet: postgres:16 │
+   │        └──▶ Pod ─┘   airticket-db      └── PVC (1Gi)       │
+   │             ▲                                              │
+   │             └── HPA: 2–6 replicas @ 70% CPU                │
+   └────────────────────────────────────────────────────────────┘
 ```
 
-### 3️⃣ Run Locally
+Three app pods share one database. That is the whole reason the storage layer is a
+StatefulSet with a volume rather than an in-memory database — see the note on state below.
+
+---
+
+## Stack
+
+| Layer | Choice |
+| --- | --- |
+| Language / framework | Java 17, Spring Boot 3.2 |
+| Persistence | PostgreSQL 16, Spring Data JPA |
+| Schema management | Flyway (versioned migrations) |
+| API docs | springdoc-openapi |
+| Build | Maven |
+| Container | Docker, multi-stage, layered JAR, non-root |
+| Local environment | Docker Compose |
+| Orchestration | Kubernetes + Kustomize |
+| CI/CD | GitHub Actions → GitHub Container Registry |
+| Tests | JUnit 5, Mockito, MockMvc, JaCoCo |
+
+---
+
+## Engineering notes
+
+Things in here that were deliberate, and why.
+
+**Seat reservation takes a row lock.** Booking reads `available_seats`, compares it to the
+request, then writes the decremented value. Two pods running that at the same moment can
+both read "2 seats left" and both succeed, overselling the flight. The read goes through
+`findByIdForUpdate`, a `SELECT … FOR UPDATE`, inside a single transaction, so a concurrent
+booking on the same flight blocks until the first commits. A `CHECK` constraint in the
+schema backs this up at the database level in case application code ever regresses.
+
+**The schema is versioned, not generated.** `spring.jpa.hibernate.ddl-auto=validate`, and
+every table comes from a numbered file in `src/main/resources/db/migration`. Hibernate
+verifies the entities match at boot and refuses to start if they've drifted. `ddl-auto=update`
+would silently alter production tables on deploy and cannot express a `CHECK` constraint,
+a partial index, or a backfill.
+
+**Money is `BigDecimal` and `NUMERIC(10,2)`.** `double` cannot represent 5499.10 exactly;
+multiply it by a seat count a few thousand times and the ledger drifts.
+
+**Liveness and readiness are separate probes.** A pod that has lost its database connection
+is not *ready* for traffic, but restarting it fixes nothing — so readiness reports the
+database and liveness doesn't. A `startupProbe` absorbs slow JVM boot so liveness can stay
+aggressive afterwards without killing pods that are merely still starting.
+
+**Errors carry a status code and a shape.** A `@RestControllerAdvice` maps a missing flight
+to 404, a full flight to 409, and a malformed payload to 400 with the offending field named.
+Nothing reaches the client as a 500 with a stack trace.
+
+**The image is layered.** The JAR is split by change frequency, so editing a controller
+pushes a few hundred kilobytes rather than the whole ~60 MB image.
+
+**The frontend uses relative paths.** `/api/flights`, never `http://localhost:8080/api/flights`,
+so the same build works on Compose, on a NodePort, and behind an ingress.
+
+### Known limits
+
+Being explicit about what this doesn't do:
+
+- **No authentication.** Anyone can cancel any booking if they know its id. Adding Spring
+  Security with per-passenger authorisation is the obvious next step.
+- **One database replica.** The StatefulSet is a single Postgres pod with no replication,
+  so the database is a single point of failure. Real high availability needs an operator
+  such as CloudNativePG.
+- **Demo credentials are committed** in `k8s/postgres/secret.yaml` so the project runs from
+  a clean clone. A real cluster would use Sealed Secrets or External Secrets Operator.
+- **Seats are counted, not assigned.** There is no seat map; a booking reserves *n* seats
+  rather than 12A and 12B.
+
+---
+
+## API
+
+Full interactive reference at `/swagger-ui.html`. The common calls:
+
 ```bash
-java -jar target/airticket-booking-system.jar
-# Access at http://localhost:8080
-```
+# Search a route
+curl "http://localhost:8080/api/flights/search?origin=Delhi&destination=Mumbai"
 
-### 4️⃣ Build Docker Image
-```bash
-docker build -t airticket-booking-system:latest .
-docker run -p 8080:8080 airticket-booking-system:latest
-```
-
-### 5️⃣ Deploy with Ansible
-```bash
-ansible-playbook -i ansible/inventory.ini ansible/deploy-playbook.yml
-```
-
-### 6️⃣ Deploy to Kubernetes (Manual)
-```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/configmap.yaml -n airticket-app
-kubectl apply -f k8s/deployment.yaml -n airticket-app
-kubectl apply -f k8s/service.yaml -n airticket-app
-kubectl apply -f k8s/hpa.yaml -n airticket-app
-
-kubectl get pods -n airticket-app
-kubectl get svc -n airticket-app
-```
-
-## 🔄 Jenkins Pipeline Stages
-
-| # | Stage | Description |
-|---|-------|-------------|
-| 1 | Checkout from Git | Clone repository |
-| 2 | Build with Maven | Compile source code |
-| 3 | Run Unit Tests | Execute JUnit tests |
-| 4 | Package Application | Build JAR file |
-| 5 | Code Quality Check | Static analysis |
-| 6 | Build Docker Image | Create container image |
-| 7 | Push to Registry | Upload to Docker Hub |
-| 8 | Deploy with Ansible | Run automation playbook |
-| 9 | Deploy to Kubernetes | Apply K8s manifests |
-| 10 | Verify Deployment | Health checks |
-
-## 🌐 REST API Endpoints
-
-### ✈ Flight Endpoints
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/flights` | List all flights |
-| GET | `/api/flights/{id}` | Get flight by ID |
-| POST | `/api/flights` | Add a new flight |
-| PUT | `/api/flights/{id}` | Update flight |
-| DELETE | `/api/flights/{id}` | Delete flight |
-| GET | `/api/flights/search?source=X&destination=Y` | Search flights |
-| GET | `/api/flights/health` | Health check |
-
-### 🎫 Booking Endpoints
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/bookings` | List all bookings |
-| GET | `/api/bookings/{id}` | Get booking by ID |
-| POST | `/api/bookings` | Book a ticket |
-| PUT | `/api/bookings/{id}/cancel` | Cancel booking |
-| DELETE | `/api/bookings/{id}` | Delete booking |
-| GET | `/api/bookings/passenger?email=X` | Get bookings by email |
-
-### 📝 Sample API Requests
-
-**Add a new flight:**
-```bash
-curl -X POST http://localhost:8080/api/flights \
-  -H "Content-Type: application/json" \
-  -d '{
-    "flightNumber": "AI707",
-    "airline": "Air India",
-    "source": "Delhi",
-    "destination": "Mumbai",
-    "departureTime": "08:00",
-    "arrivalTime": "10:30",
-    "price": 5500.00,
-    "availableSeats": 150
-  }'
-```
-
-**Book a ticket:**
-```bash
+# Reserve two seats
 curl -X POST http://localhost:8080/api/bookings \
-  -H "Content-Type: application/json" \
+  -H 'Content-Type: application/json' \
   -d '{
-    "passengerName": "John Doe",
-    "passengerEmail": "john@example.com",
-    "passengerPhone": "9876543210",
     "flightId": 1,
+    "passengerName": "Vijeta Kanwar",
+    "passengerEmail": "vijeta@example.com",
+    "passengerPhone": "9876543210",
     "seatsBooked": 2
   }'
+
+# Find your bookings
+curl "http://localhost:8080/api/bookings/passenger?email=vijeta@example.com"
+
+# Cancel one (returns the seats to the flight)
+curl -X POST http://localhost:8080/api/bookings/1/cancel
 ```
 
-**Search flights:**
+| Method | Endpoint | Returns |
+| --- | --- | --- |
+| GET | `/api/flights` | 200 — the whole schedule |
+| GET | `/api/flights/search?origin=&destination=` | 200, 400 if a parameter is missing |
+| GET | `/api/flights/{id}` | 200, 404 |
+| POST | `/api/flights` | 201 + `Location`, 400, 409 on duplicate flight number |
+| PUT | `/api/flights/{id}` | 200, 400, 404, 409 |
+| DELETE | `/api/flights/{id}` | 204, 404 |
+| GET | `/api/bookings` | 200 |
+| GET | `/api/bookings/{id}` | 200, 404 |
+| GET | `/api/bookings/reference/{ref}` | 200, 404 |
+| GET | `/api/bookings/passenger?email=` | 200, 400 |
+| POST | `/api/bookings` | 201 + `Location`, 400, 404, **409 when the flight is full** |
+| POST | `/api/bookings/{id}/cancel` | 200, 404, 409 if already cancelled |
+| DELETE | `/api/bookings/{id}` | 204, 404 |
+
+Every error response has the same shape:
+
+```json
+{
+  "timestamp": "2026-08-01T09:14:22Z",
+  "status": 409,
+  "error": "Conflict",
+  "message": "Requested 5 seat(s) but only 2 remain on this flight",
+  "path": "/api/bookings"
+}
+```
+
+---
+
+## Deploying to Kubernetes
+
+Tested on minikube.
+
 ```bash
-curl "http://localhost:8080/api/flights/search?source=Delhi&destination=Mumbai"
+minikube start
+minikube addons enable metrics-server     # the HPA needs this
+
+kubectl apply -k k8s/
+
+kubectl -n airticket rollout status deployment/airticket-app
+minikube service airticket-app -n airticket --url
 ```
 
-## 🧪 Setting Up Jenkins Pipeline
+To run your own image instead of the published one:
 
-1. **Install Required Jenkins Plugins:**
-   - Git Plugin
-   - Pipeline Plugin
-   - Docker Pipeline Plugin
-   - Kubernetes CLI Plugin
-   - Ansible Plugin
+```bash
+cd k8s && kustomize edit set image ghcr.io/vijeta-kanwar/air_ticket_system=my-image:tag
+```
 
-2. **Configure Tools in Jenkins:**
-   - Maven (named: `Maven-3.9`)
-   - JDK 17 (named: `JDK-17`)
+---
 
-3. **Add Credentials:**
-   - DockerHub: `dockerhub-credentials`
-   - Kubernetes config: `kubeconfig`
+## Tests
 
-4. **Create New Pipeline:**
-   - New Item → Pipeline
-   - Pipeline script from SCM
-   - Repository URL: your Git repo
-   - Script Path: `Jenkinsfile`
+```bash
+mvn verify          # unit + slice tests, then a JaCoCo report in target/site/jacoco
+```
 
-5. **Run the Pipeline** by clicking *Build Now*.
+Three layers, each testing something the others can't:
 
-## 📸 Submission Screenshots
+- **Service tests** (Mockito, no Spring context) — overbooking is rejected, seat counts move
+  by the right amount, cancelling twice doesn't credit seats twice, the flight row is locked
+  rather than plainly read.
+- **Controller tests** (`@WebMvcTest` + MockMvc) — validation rejects bad emails and zero-seat
+  requests with 400 and a named field; a full flight returns 409, not 500.
+- **Smoke test** (CI, `docker compose`) — the image builds, Flyway migrates a real Postgres,
+  a booking actually decrements the seat count. This is the layer that catches what mocks
+  can't: a broken Dockerfile, a bad migration, a misconfigured connection string.
 
-Capture screenshots of:
-- `01-jenkins-pipeline.png` — Jenkins pipeline execution
-- `02-docker-build.png` — Docker image build output
-- `03-docker-images.png` — `docker images` output
-- `04-kubectl-pods.png` — Running K8s pods
-- `05-kubectl-services.png` — K8s services
-- `06-app-running.png` — Application UI in browser
-- `07-api-response.png` — REST API response (e.g. POST booking)
+---
 
-## 🐛 Troubleshooting
+## Repository layout
 
-| Issue | Solution |
-|-------|----------|
-| Maven build fails | Check Java version: `java -version` |
-| Docker push denied | Re-login: `docker login` |
-| Pod CrashLoopBackOff | `kubectl logs <pod-name> -n airticket-app` |
-| Service not accessible | Check NodePort: `kubectl get svc -n airticket-app` |
-| Git push rejected | `git pull origin main --allow-unrelated-histories` then push |
+```
+.github/workflows/ci.yml     test → smoke → publish to GHCR
+src/main/java/com/airticket/
+  controller/                REST endpoints, DTOs in and out
+  dto/                       request/response records, bean validation
+  exception/                 typed exceptions + @RestControllerAdvice
+  model/                     JPA entities
+  repository/                Spring Data interfaces, incl. the locking query
+  service/                   transactional business logic
+src/main/resources/
+  db/migration/              Flyway V1 schema, V2 seed data
+  static/index.html          the booking UI
+  application*.properties    default / local / kubernetes profiles
+src/test/java/               unit and slice tests
+k8s/                         Kustomize: namespace, postgres, app
+Dockerfile                   multi-stage, layered, non-root
+docker-compose.yml           app + postgres for local work
+```
 
-## 🎬 Demo Steps
+---
 
-1. Start application: `mvn spring-boot:run`
-2. Open browser: `http://localhost:8080`
-3. Get all flights: `curl http://localhost:8080/api/flights`
-4. Search flights: `curl "http://localhost:8080/api/flights/search?source=Delhi&destination=Mumbai"`
-5. Book ticket via POST request
-6. View bookings: `curl http://localhost:8080/api/bookings`
+## Author
 
-## 👨‍💻 Author
+**Vijeta Kanwar** — [github.com/Vijeta-kanwar](https://github.com/Vijeta-kanwar)
 
-**DevOps Lab Project**
-Air Ticket Booking Management System with integrated CI/CD pipeline.
+## License
 
-## 📄 License
-
-This project is for educational purposes.
+MIT — see [LICENSE](LICENSE).

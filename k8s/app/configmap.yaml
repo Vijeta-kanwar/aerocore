@@ -1,0 +1,14 @@
+# Non-secret runtime settings. Every key here is consumed via envFrom in the
+# Deployment — nothing in this file is decorative.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airticket-app-config
+  labels:
+    app.kubernetes.io/name: airticket
+    app.kubernetes.io/component: backend
+data:
+  DB_URL: jdbc:postgresql://airticket-db:5432/airticket
+  SPRING_PROFILES_ACTIVE: kubernetes
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75.0 -XX:+UseContainerSupport"
+  LOGGING_LEVEL_COM_AIRTICKET: INFO

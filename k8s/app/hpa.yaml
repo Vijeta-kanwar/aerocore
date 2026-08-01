@@ -1,0 +1,26 @@
+# Requires metrics-server. On minikube: minikube addons enable metrics-server
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: airticket-app
+  labels:
+    app.kubernetes.io/name: airticket
+    app.kubernetes.io/component: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: airticket-app
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      # Without this the HPA reacts to a brief traffic dip and thrashes.
+      stabilizationWindowSeconds: 300
