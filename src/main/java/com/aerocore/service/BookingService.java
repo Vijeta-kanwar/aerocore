@@ -1,10 +1,11 @@
 package com.aerocore.service;
 
 import com.aerocore.dto.BookingRequest;
-import com.aerocore.exception.BookingAlreadyCancelledException;
+import com.aerocore.exception.IllegalBookingTransitionException;
 import com.aerocore.exception.InsufficientSeatsException;
 import com.aerocore.exception.ResourceNotFoundException;
 import com.aerocore.model.Booking;
+import com.aerocore.model.BookingStatus;
 import com.aerocore.model.Flight;
 import com.aerocore.repository.BookingRepository;
 import com.aerocore.repository.FlightRepository;
@@ -84,17 +85,22 @@ public class BookingService {
     @Transactional
     public Booking cancel(Long id) {
         Booking booking = findById(id);
+        BookingStatus current = booking.getStatus();
 
-        if (booking.isCancelled()) {
-            throw new BookingAlreadyCancelledException(booking.getReference());
+        // Checked before the lock, not after: a doomed request shouldn't make everyone
+        // else queue behind a row lock it was never going to use.
+        if (!current.canTransitionTo(BookingStatus.CANCELLED)) {
+            throw new IllegalBookingTransitionException(booking.getReference(), current, BookingStatus.CANCELLED);
         }
 
-        // Lock the flight before touching its seat counter, same reasoning as create().
-        Flight flight = flightRepository.findByIdForUpdate(booking.getFlight().getId())
-                .orElseThrow(() -> ResourceNotFoundException.flight(booking.getFlight().getId()));
+        if (current.releasesSeatsOnTransitionTo(BookingStatus.CANCELLED)) {
+            // Lock the flight before touching its seat counter, same reasoning as create().
+            Flight flight = flightRepository.findByIdForUpdate(booking.getFlight().getId())
+                    .orElseThrow(() -> ResourceNotFoundException.flight(booking.getFlight().getId()));
+            flight.releaseSeats(booking.getSeatsBooked());
+        }
 
         // Both entities are managed here; the seat credit and the status change commit together.
-        flight.releaseSeats(booking.getSeatsBooked());
         booking.cancel();
 
         return booking;
@@ -103,11 +109,15 @@ public class BookingService {
     @Transactional
     public void delete(Long id) {
         Booking booking = findById(id);
-        if (!booking.isCancelled()) {
+
+        // Ask the state, not "is it cancelled". An expired hold has already returned its
+        // seats and was never cancelled, so the old check would have credited them twice.
+        if (booking.holdsSeats()) {
             Flight flight = flightRepository.findByIdForUpdate(booking.getFlight().getId())
                     .orElseThrow(() -> ResourceNotFoundException.flight(booking.getFlight().getId()));
             flight.releaseSeats(booking.getSeatsBooked());
         }
+
         bookingRepository.delete(booking);
     }
 

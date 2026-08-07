@@ -32,11 +32,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request);
     }
 
-    @ExceptionHandler({DuplicateFlightException.class, BookingAlreadyCancelledException.class})
-    public ResponseEntity<ApiError> handleConflict(RuntimeException ex, HttpServletRequest request) {
-        return build(HttpStatus.CONFLICT, ex.getMessage(), request);
-    }
+    
 
+ @ExceptionHandler({DuplicateFlightException.class, IllegalBookingTransitionException.class})
+public ResponseEntity<ApiError> handleConflict(RuntimeException ex, HttpServletRequest request) {
+    return build(HttpStatus.CONFLICT, ex.getMessage(), request);
+}
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException ex,
                                                      HttpServletRequest request) {

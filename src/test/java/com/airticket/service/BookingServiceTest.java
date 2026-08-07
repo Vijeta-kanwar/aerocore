@@ -2,7 +2,8 @@ package com.aerocore.service;
 
 import com.aerocore.TestFixtures;
 import com.aerocore.dto.BookingRequest;
-import com.aerocore.exception.BookingAlreadyCancelledException;
+
+import com.aerocore.exception.IllegalBookingTransitionException;
 import com.aerocore.exception.InsufficientSeatsException;
 import com.aerocore.exception.ResourceNotFoundException;
 import com.aerocore.model.Booking;
@@ -174,7 +175,7 @@ class BookingServiceTest {
         when(bookingRepository.findById(10L)).thenReturn(Optional.of(booking));
 
         assertThatThrownBy(() -> bookingService.cancel(10L))
-                .isInstanceOf(BookingAlreadyCancelledException.class);
+                .isInstanceOf(IllegalBookingTransitionException.class);
 
         assertThat(flight.getAvailableSeats()).isEqualTo(95);
         verify(flightRepository, never()).findByIdForUpdate(any());
