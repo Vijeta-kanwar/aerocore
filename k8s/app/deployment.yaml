@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: airticket-app
+  name: aerocore-app
   labels:
-    app.kubernetes.io/name: airticket
+    app.kubernetes.io/name: aerocore
     app.kubernetes.io/component: backend
 spec:
   replicas: 3
@@ -14,12 +14,12 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: airticket
+      app.kubernetes.io/name: aerocore
       app.kubernetes.io/component: backend
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: airticket
+        app.kubernetes.io/name: aerocore
         app.kubernetes.io/component: backend
     spec:
       securityContext:
@@ -34,13 +34,13 @@ spec:
             - sh
             - -c
             - |
-              until pg_isready -h airticket-db -p 5432 -U "$POSTGRES_USER"; do
+              until pg_isready -h aerocore-db -p 5432 -U "$POSTGRES_USER"; do
                 echo "waiting for postgres..."
                 sleep 2
               done
           envFrom:
             - secretRef:
-                name: airticket-db-credentials
+                name: aerocore-db-credentials
       containers:
         - name: app
           image: ghcr.io/vijeta-kanwar/air_ticket_system:latest
@@ -50,17 +50,17 @@ spec:
               containerPort: 8080
           envFrom:
             - configMapRef:
-                name: airticket-app-config
+                name: aerocore-app-config
           env:
             - name: DB_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: airticket-db-credentials
+                  name: aerocore-db-credentials
                   key: POSTGRES_USER
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: airticket-db-credentials
+                  name: aerocore-db-credentials
                   key: POSTGRES_PASSWORD
           resources:
             requests:

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-NAMESPACE := airticket
+NAMESPACE := aerocore
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -14,11 +14,11 @@ test: ## Run unit and slice tests with coverage
 	mvn -B verify
 
 image: ## Build the container image
-	docker build -t airticket-booking-system:local .
+	docker build -t aerocore:local .
 
 deploy: ## Apply all manifests to the current kube context
 	kubectl apply -k k8s/
-	kubectl -n $(NAMESPACE) rollout status deployment/airticket-app
+	kubectl -n $(NAMESPACE) rollout status deployment/aerocore-app
 
 logs: ## Tail application logs from the cluster
 	kubectl -n $(NAMESPACE) logs -l app.kubernetes.io/component=backend -f --tail=100

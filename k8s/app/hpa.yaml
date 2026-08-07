@@ -2,15 +2,15 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: airticket-app
+  name: aerocore-app
   labels:
-    app.kubernetes.io/name: airticket
+    app.kubernetes.io/name: aerocore
     app.kubernetes.io/component: backend
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: airticket-app
+    name: aerocore-app
   minReplicas: 2
   maxReplicas: 6
   metrics:

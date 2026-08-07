@@ -51,13 +51,13 @@ To stop and wipe the database volume: `docker compose down -v`
                                         │ kubectl apply -k k8s/
                                         ▼
    ┌────────────────────────────────────────────────────────────┐
-   │  namespace: airticket                                      │
+   │  namespace: aerocore                                      │
    │                                                            │
    │   Service (NodePort 30080)                                 │
    │        │                                                   │
    │        ├──▶ Pod ─┐                                         │
    │        ├──▶ Pod ─┼──▶ Service ──▶ StatefulSet: postgres:16 │
-   │        └──▶ Pod ─┘   airticket-db      └── PVC (1Gi)       │
+   │        └──▶ Pod ─┘   aerocore-db      └── PVC (1Gi)       │
    │             ▲                                              │
    │             └── HPA: 2–6 replicas @ 70% CPU                │
    └────────────────────────────────────────────────────────────┘
@@ -202,14 +202,14 @@ minikube addons enable metrics-server     # the HPA needs this
 
 kubectl apply -k k8s/
 
-kubectl -n airticket rollout status deployment/airticket-app
-minikube service airticket-app -n airticket --url
+kubectl -n aerocore rollout status deployment/aerocore-app
+minikube service aerocore-app -n aerocore --url
 ```
 
 To run your own image instead of the published one:
 
 ```bash
-cd k8s && kustomize edit set image ghcr.io/vijeta-kanwar/air_ticket_system=my-image:tag
+cd k8s && kustomize edit set image ghcr.io/vijeta-kanwar/aerocore=my-image:tag
 ```
 
 ---
@@ -237,7 +237,7 @@ Three layers, each testing something the others can't:
 
 ```
 .github/workflows/ci.yml     test → smoke → publish to GHCR
-src/main/java/com/airticket/
+src/main/java/com/aerocore/
   controller/                REST endpoints, DTOs in and out
   dto/                       request/response records, bean validation
   exception/                 typed exceptions + @RestControllerAdvice

@@ -7,6 +7,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class AeroCoreApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(AirTicketApplication.class, args);
+        SpringApplication.run(AeroCoreApplication.class, args);
     }
 }

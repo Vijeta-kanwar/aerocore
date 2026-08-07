@@ -1,17 +1,17 @@
 # A NodePort Service already allocates a ClusterIP, so in-cluster callers reach
-# the app at airticket-app:80. The previous version declared a second ClusterIP
+# the app at aerocore-app:80. The previous version declared a second ClusterIP
 # Service for that, which was redundant.
 apiVersion: v1
 kind: Service
 metadata:
-  name: airticket-app
+  name: aerocore-app
   labels:
-    app.kubernetes.io/name: airticket
+    app.kubernetes.io/name: aerocore
     app.kubernetes.io/component: backend
 spec:
   type: NodePort
   selector:
-    app.kubernetes.io/name: airticket
+    app.kubernetes.io/name: aerocore
     app.kubernetes.io/component: backend
   ports:
     - name: http

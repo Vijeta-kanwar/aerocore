@@ -4,21 +4,21 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: airticket-db
+  name: aerocore-db
   labels:
-    app.kubernetes.io/name: airticket
+    app.kubernetes.io/name: aerocore
     app.kubernetes.io/component: database
 spec:
-  serviceName: airticket-db
+  serviceName: aerocore-db
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: airticket
+      app.kubernetes.io/name: aerocore
       app.kubernetes.io/component: database
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: airticket
+        app.kubernetes.io/name: aerocore
         app.kubernetes.io/component: database
     spec:
       securityContext:
@@ -31,7 +31,7 @@ spec:
               containerPort: 5432
           envFrom:
             - secretRef:
-                name: airticket-db-credentials
+                name: aerocore-db-credentials
           env:
             # Postgres refuses to initialise into a non-empty mount root, so data
             # lives in a subdirectory of the volume.
