@@ -1,12 +1,12 @@
-package com.airticket.controller;
+package com.aerocore.controller;
 
-import com.airticket.TestFixtures;
-import com.airticket.dto.BookingRequest;
-import com.airticket.exception.InsufficientSeatsException;
-import com.airticket.exception.ResourceNotFoundException;
-import com.airticket.model.Booking;
-import com.airticket.model.Flight;
-import com.airticket.service.BookingService;
+import com.aerocore.TestFixtures;
+import com.aerocore.dto.BookingRequest;
+import com.aerocore.exception.InsufficientSeatsException;
+import com.aerocore.exception.ResourceNotFoundException;
+import com.aerocore.model.Booking;
+import com.aerocore.model.Flight;
+import com.aerocore.service.BookingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

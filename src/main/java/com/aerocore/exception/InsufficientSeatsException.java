@@ -1,4 +1,4 @@
-package com.airticket.exception;
+package com.aerocore.exception;
 
 /** Maps to HTTP 409 — the request was well-formed but conflicts with current state. */
 public class InsufficientSeatsException extends RuntimeException {

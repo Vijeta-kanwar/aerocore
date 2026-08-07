@@ -1,15 +1,15 @@
-package com.airticket.service;
+package com.aerocore.service;
 
-import com.airticket.TestFixtures;
-import com.airticket.dto.BookingRequest;
-import com.airticket.exception.BookingAlreadyCancelledException;
-import com.airticket.exception.InsufficientSeatsException;
-import com.airticket.exception.ResourceNotFoundException;
-import com.airticket.model.Booking;
-import com.airticket.model.BookingStatus;
-import com.airticket.model.Flight;
-import com.airticket.repository.BookingRepository;
-import com.airticket.repository.FlightRepository;
+import com.aerocore.TestFixtures;
+import com.aerocore.dto.BookingRequest;
+import com.aerocore.exception.BookingAlreadyCancelledException;
+import com.aerocore.exception.InsufficientSeatsException;
+import com.aerocore.exception.ResourceNotFoundException;
+import com.aerocore.model.Booking;
+import com.aerocore.model.BookingStatus;
+import com.aerocore.model.Flight;
+import com.aerocore.repository.BookingRepository;
+import com.aerocore.repository.FlightRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

@@ -1,6 +1,6 @@
-package com.airticket.repository;
+package com.aerocore.repository;
 
-import com.airticket.model.Booking;
+import com.aerocore.model.Booking;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

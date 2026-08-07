@@ -1,4 +1,4 @@
-package com.airticket.exception;
+package com.aerocore.exception;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 

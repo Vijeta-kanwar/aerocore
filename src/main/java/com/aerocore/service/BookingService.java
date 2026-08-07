@@ -1,13 +1,13 @@
-package com.airticket.service;
+package com.aerocore.service;
 
-import com.airticket.dto.BookingRequest;
-import com.airticket.exception.BookingAlreadyCancelledException;
-import com.airticket.exception.InsufficientSeatsException;
-import com.airticket.exception.ResourceNotFoundException;
-import com.airticket.model.Booking;
-import com.airticket.model.Flight;
-import com.airticket.repository.BookingRepository;
-import com.airticket.repository.FlightRepository;
+import com.aerocore.dto.BookingRequest;
+import com.aerocore.exception.BookingAlreadyCancelledException;
+import com.aerocore.exception.InsufficientSeatsException;
+import com.aerocore.exception.ResourceNotFoundException;
+import com.aerocore.model.Booking;
+import com.aerocore.model.Flight;
+import com.aerocore.repository.BookingRepository;
+import com.aerocore.repository.FlightRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

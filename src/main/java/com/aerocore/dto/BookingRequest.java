@@ -1,4 +1,4 @@
-package com.airticket.dto;
+package com.aerocore.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;

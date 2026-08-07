@@ -1,11 +1,11 @@
-package com.airticket.controller;
+package com.aerocore.controller;
 
-import com.airticket.TestFixtures;
-import com.airticket.dto.FlightRequest;
-import com.airticket.exception.DuplicateFlightException;
-import com.airticket.exception.ResourceNotFoundException;
-import com.airticket.model.Flight;
-import com.airticket.service.FlightService;
+import com.aerocore.TestFixtures;
+import com.aerocore.dto.FlightRequest;
+import com.aerocore.exception.DuplicateFlightException;
+import com.aerocore.exception.ResourceNotFoundException;
+import com.aerocore.model.Flight;
+import com.aerocore.service.FlightService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

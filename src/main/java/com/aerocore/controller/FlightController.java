@@ -1,8 +1,8 @@
-package com.airticket.controller;
+package com.aerocore.controller;
 
-import com.airticket.dto.FlightRequest;
-import com.airticket.dto.FlightResponse;
-import com.airticket.service.FlightService;
+import com.aerocore.dto.FlightRequest;
+import com.aerocore.dto.FlightResponse;
+import com.aerocore.service.FlightService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;

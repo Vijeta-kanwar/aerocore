@@ -1,4 +1,4 @@
-package com.airticket.exception;
+package com.aerocore.exception;
 
 /** Maps to HTTP 409 — cancelling twice would release seats twice. */
 public class BookingAlreadyCancelledException extends RuntimeException {

@@ -1,4 +1,4 @@
-package com.airticket.dto;
+package com.aerocore.dto;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;

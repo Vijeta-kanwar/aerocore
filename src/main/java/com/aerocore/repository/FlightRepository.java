@@ -1,6 +1,6 @@
-package com.airticket.repository;
+package com.aerocore.repository;
 
-import com.airticket.model.Flight;
+import com.aerocore.model.Flight;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;

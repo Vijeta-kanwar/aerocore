@@ -1,4 +1,4 @@
-package com.airticket.exception;
+package com.aerocore.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;

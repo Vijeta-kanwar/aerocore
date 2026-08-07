@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/root/.m2 mvn -B clean package -DskipTests
 
 # Split the fat jar into layers ordered by how often they change, so a code-only
 # change pushes a few hundred KB instead of the whole image.
-RUN java -Djarmode=layertools -jar target/airticket-booking-system.jar extract --destination extracted
+RUN java -Djarmode=layertools -jar target/aerocore.jar extract --destination extracted
 
 # ---------- Stage 2: runtime ----------
 FROM eclipse-temurin:17-jre-jammy
@@ -25,17 +25,17 @@ FROM eclipse-temurin:17-jre-jammy
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl \
  && rm -rf /var/lib/apt/lists/* \
- && groupadd -g 1000 airticket \
- && useradd -u 1000 -g airticket -m -s /usr/sbin/nologin airticket
+ && groupadd -g 1000 aerocore \
+ && useradd -u 1000 -g aerocore -m -s /usr/sbin/nologin aerocore
 
 WORKDIR /app
 
-COPY --from=builder --chown=airticket:airticket /build/extracted/dependencies/ ./
-COPY --from=builder --chown=airticket:airticket /build/extracted/spring-boot-loader/ ./
-COPY --from=builder --chown=airticket:airticket /build/extracted/snapshot-dependencies/ ./
-COPY --from=builder --chown=airticket:airticket /build/extracted/application/ ./
+COPY --from=builder --chown=aerocore:aerocore /build/extracted/dependencies/ ./
+COPY --from=builder --chown=aerocore:aerocore /build/extracted/spring-boot-loader/ ./
+COPY --from=builder --chown=aerocore:aerocore /build/extracted/snapshot-dependencies/ ./
+COPY --from=builder --chown=aerocore:aerocore /build/extracted/application/ ./
 
-USER airticket
+USER aerocore
 
 EXPOSE 8080
 

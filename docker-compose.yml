@@ -4,17 +4,17 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: airticket-db
+    container_name: aerocore-db
     environment:
-      POSTGRES_DB: airticket
-      POSTGRES_USER: airticket
-      POSTGRES_PASSWORD: airticket
+      POSTGRES_DB: aerocore
+      POSTGRES_USER: aerocore
+      POSTGRES_PASSWORD: aerocore
     ports:
       - "5432:5432"
     volumes:
-      - airticket-db-data:/var/lib/postgresql/data
+      - aerocore-db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U airticket -d airticket"]
+      test: ["CMD-SHELL", "pg_isready -U aerocore -d aerocore"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -23,11 +23,11 @@ services:
   app:
     build:
       context: .
-    container_name: airticket-app
+    container_name: aerocore-app
     environment:
-      DB_URL: jdbc:postgresql://db:5432/airticket
-      DB_USERNAME: airticket
-      DB_PASSWORD: airticket
+      DB_URL: jdbc:postgresql://db:5432/aerocore
+      DB_USERNAME: aerocore
+      DB_PASSWORD: aerocore
       SPRING_PROFILES_ACTIVE: local
     ports:
       - "8080:8080"
@@ -37,4 +37,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  airticket-db-data:
+  aerocore-db-data:

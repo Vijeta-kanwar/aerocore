@@ -1,4 +1,4 @@
-package com.airticket.exception;
+package com.aerocore.exception;
 
 /** Maps to HTTP 404. */
 public class ResourceNotFoundException extends RuntimeException {

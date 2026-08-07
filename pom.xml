@@ -11,12 +11,12 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.airticket</groupId>
-    <artifactId>airticket-booking-system</artifactId>
+    <groupId>com.aerocore</groupId>
+    <artifactId>aerocore</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
-    <name>airticket-booking-system</name>
+    <name>aerocore</name>
     <description>Flight search and seat booking service with a containerised delivery pipeline</description>
 
     <properties>
@@ -73,7 +73,7 @@
     </dependencies>
 
     <build>
-        <finalName>airticket-booking-system</finalName>
+        <finalName>aerocore</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

@@ -1,7 +1,7 @@
-package com.airticket;
+package com.aerocore;
 
-import com.airticket.model.Booking;
-import com.airticket.model.Flight;
+import com.aerocore.model.Booking;
+import com.aerocore.model.Flight;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;

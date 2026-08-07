@@ -1,4 +1,4 @@
-package com.airticket.service;
+package com.aerocore.service;
 
 import org.springframework.stereotype.Component;
 

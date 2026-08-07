@@ -1,6 +1,6 @@
-package com.airticket.dto;
+package com.aerocore.dto;
 
-import com.airticket.model.Booking;
+import com.aerocore.model.Booking;
 
 import java.math.BigDecimal;
 import java.time.Instant;

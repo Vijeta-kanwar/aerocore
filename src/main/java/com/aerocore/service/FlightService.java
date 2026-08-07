@@ -1,10 +1,10 @@
-package com.airticket.service;
+package com.aerocore.service;
 
-import com.airticket.dto.FlightRequest;
-import com.airticket.model.Flight;
-import com.airticket.exception.DuplicateFlightException;
-import com.airticket.exception.ResourceNotFoundException;
-import com.airticket.repository.FlightRepository;
+import com.aerocore.dto.FlightRequest;
+import com.aerocore.model.Flight;
+import com.aerocore.exception.DuplicateFlightException;
+import com.aerocore.exception.ResourceNotFoundException;
+import com.aerocore.repository.FlightRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

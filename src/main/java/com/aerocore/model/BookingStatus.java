@@ -1,4 +1,4 @@
-package com.airticket.model;
+package com.aerocore.model;
 
 public enum BookingStatus {
     CONFIRMED,

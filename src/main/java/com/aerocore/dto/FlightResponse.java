@@ -1,6 +1,6 @@
-package com.airticket.dto;
+package com.aerocore.dto;
 
-import com.airticket.model.Flight;
+import com.aerocore.model.Flight;
 import com.fasterxml.jackson.annotation.JsonFormat;
 
 import java.math.BigDecimal;
