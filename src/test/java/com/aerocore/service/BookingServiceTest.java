@@ -28,6 +28,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("BookingService")
@@ -53,7 +55,8 @@ class BookingServiceTest {
     @DisplayName("confirms the booking and decrements the flight's seat count")
     void createsBookingAndReservesSeats() {
         Flight flight = TestFixtures.flight(1L, 180, 100);
-        when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
+       when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
+       when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(1);
         when(referenceGenerator.generate()).thenReturn("AT-7F3K2Q");
         when(bookingRepository.existsByReference("AT-7F3K2Q")).thenReturn(false);
         when(bookingRepository.save(any(Booking.class))).thenAnswer(call -> call.getArgument(0));
@@ -62,14 +65,15 @@ class BookingServiceTest {
 
         assertThat(booking.getStatus()).isEqualTo(BookingStatus.CONFIRMED);
         assertThat(booking.getSeatsBooked()).isEqualTo(3);
-        assertThat(flight.getAvailableSeats()).isEqualTo(97);
+        verify(flightRepository).reserveSeats(1L, 3);
     }
 
     @Test
     @DisplayName("prices the booking as unit price times seat count, exactly")
     void calculatesTotalWithoutFloatingPointDrift() {
         Flight flight = TestFixtures.flight(1L, 180, 100);
-        when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
+        when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(1);
         when(referenceGenerator.generate()).thenReturn("AT-7F3K2Q");
         when(bookingRepository.existsByReference("AT-7F3K2Q")).thenReturn(false);
         when(bookingRepository.save(any(Booking.class))).thenAnswer(call -> call.getArgument(0));
@@ -83,7 +87,8 @@ class BookingServiceTest {
     @DisplayName("normalises the passenger email so lookups are case-insensitive")
     void lowercasesEmailOnCreate() {
         Flight flight = TestFixtures.flight(1L, 180, 100);
-        when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
+        when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(1);
         when(referenceGenerator.generate()).thenReturn("AT-7F3K2Q");
         when(bookingRepository.existsByReference("AT-7F3K2Q")).thenReturn(false);
         when(bookingRepository.save(any(Booking.class))).thenAnswer(call -> call.getArgument(0));
@@ -99,37 +104,36 @@ class BookingServiceTest {
     @Test
     @DisplayName("rejects a booking for more seats than remain, and saves nothing")
     void rejectsOverbooking() {
-        Flight flight = TestFixtures.flight(1L, 180, 2);
-        when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
+       Flight flight = TestFixtures.flight(1L, 180, 2);
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
+        when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(0);
 
         assertThatThrownBy(() -> bookingService.create(requestFor(1L, 5)))
                 .isInstanceOf(InsufficientSeatsException.class)
                 .hasMessageContaining("only 2 remain");
 
-        assertThat(flight.getAvailableSeats()).isEqualTo(2);
+       
         verify(bookingRepository, never()).save(any());
     }
 
-    @Test
-    @DisplayName("takes a write lock on the flight rather than a plain read")
-    void locksFlightRowBeforeReadingSeatCount() {
+    
+     @Test
+     @DisplayName("reserves seats with a conditional update, not a row lock")
+    void reservesSeatsWithoutTakingALock() {
         Flight flight = TestFixtures.flight(1L, 180, 100);
-        when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
-        when(referenceGenerator.generate()).thenReturn("AT-7F3K2Q");
-        when(bookingRepository.existsByReference("AT-7F3K2Q")).thenReturn(false);
-        when(bookingRepository.save(any(Booking.class))).thenAnswer(call -> call.getArgument(0));
+    when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
+    when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(1);
 
-        bookingService.create(requestFor(1L, 1));
+    bookingService.create(requestFor(1L, 2));
 
-        verify(flightRepository).findByIdForUpdate(1L);
-        verify(flightRepository, never()).findById(any());
+    verify(flightRepository).reserveSeats(1L, 2);
+    verify(flightRepository, never()).findByIdForUpdate(any());
     }
-
     @Test
     @DisplayName("reports a missing flight as not found, not as a server error")
     void rejectsUnknownFlight() {
-        when(flightRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
 
+        when(flightRepository.findById(99L)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> bookingService.create(requestFor(99L, 1)))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("99");
@@ -139,7 +143,8 @@ class BookingServiceTest {
     @DisplayName("retries the reference generator until it produces an unused reference")
     void regeneratesReferenceOnCollision() {
         Flight flight = TestFixtures.flight(1L, 180, 100);
-        when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
+        when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(1);
         when(referenceGenerator.generate()).thenReturn("AT-AAAAAA", "AT-BBBBBB");
         when(bookingRepository.existsByReference("AT-AAAAAA")).thenReturn(true);
         when(bookingRepository.existsByReference("AT-BBBBBB")).thenReturn(false);
@@ -154,16 +159,16 @@ class BookingServiceTest {
 
     @Test
     @DisplayName("returns seats to the flight when a booking is cancelled")
-    void cancelReleasesSeats() {
-        Flight flight = TestFixtures.flight(1L, 180, 95);
-        Booking booking = TestFixtures.booking(10L, flight, 5);
-        when(bookingRepository.findById(10L)).thenReturn(Optional.of(booking));
-        when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
+     void cancelReleasesSeats() {
+    Flight flight = TestFixtures.flight(1L, 180, 95);
+    Booking booking = TestFixtures.booking(10L, flight, 5);
+    when(bookingRepository.findById(10L)).thenReturn(Optional.of(booking));
+    when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
 
-        Booking cancelled = bookingService.cancel(10L);
+    Booking cancelled = bookingService.cancel(10L);
 
-        assertThat(cancelled.getStatus()).isEqualTo(BookingStatus.CANCELLED);
-        assertThat(flight.getAvailableSeats()).isEqualTo(100);
+    assertThat(cancelled.getStatus()).isEqualTo(BookingStatus.CANCELLED);
+    assertThat(flight.getAvailableSeats()).isEqualTo(100);
     }
 
     @Test
@@ -187,7 +192,9 @@ class BookingServiceTest {
         Flight flight = TestFixtures.flight(1L, 180, 180);
         Booking booking = TestFixtures.booking(10L, flight, 5);
         when(bookingRepository.findById(10L)).thenReturn(Optional.of(booking));
-        when(flightRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(flight));
+        when(flightRepository.findByIdForUpdate(1L))
+        .thenReturn(Optional.of(flight));
+      
 
         bookingService.cancel(10L);
 

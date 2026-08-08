@@ -50,26 +50,38 @@ public class BookingService {
     }
 
     /**
-     * Reserving a seat is read-then-write on a shared counter, so the whole operation
-     * runs in one transaction and takes a row lock on the flight first. Any other
-     * replica attempting the same flight blocks until this commits.
+     * Reserving seats is a conditional atomic update, not lock-read-check-write.
+     *
+     * <p>The seat decision belongs to the database: reserveSeats decrements only if enough
+     * remain, and reports whether it did. Nothing is read into Java and then acted upon, so
+     * there is no window for another booking to change the count underneath us.
+     *
+     * <p>The read below still happens, but not to decide anything. It answers a different
+     * question -- does this flight exist at all -- because reserveSeats returning zero cannot
+     * tell "full" from "no such flight", and those are a 409 and a 404.
      */
     @Transactional
     public Booking create(BookingRequest request) {
-        Flight flight = flightRepository.findByIdForUpdate(request.flightId())
+        // Establishes existence and gives us the price. Its seat count is deliberately unused:
+        // any value read separately from the write is stale the moment we hold it.
+        Flight flight = flightRepository.findById(request.flightId())
                 .orElseThrow(() -> ResourceNotFoundException.flight(request.flightId()));
-
-        if (!flight.hasSeatsFor(request.seatsBooked())) {
-            throw new InsufficientSeatsException(request.seatsBooked(), flight.getAvailableSeats());
-        }
-
-        // No explicit save: flight is a managed entity inside this transaction, so the
-        // seat decrement is flushed by dirty checking at commit — atomically with the
-        // booking insert below.
-        flight.reserveSeats(request.seatsBooked());
 
         BigDecimal total = flight.getPrice().multiply(BigDecimal.valueOf(request.seatsBooked()));
 
+        int reserved = flightRepository.reserveSeats(request.flightId(), request.seatsBooked());
+        if (reserved == 0) {
+            // We already know the flight exists, so zero rows can only mean it is too full.
+            // This re-read is honest data: reserveSeats cleared the persistence context, so it
+            // hits the database instead of handing back the stale object from above.
+            int remaining = flightRepository.findById(request.flightId())
+                    .map(Flight::getAvailableSeats)
+                    .orElse(0);
+            throw new InsufficientSeatsException(request.seatsBooked(), remaining);
+        }
+
+        // flight is detached now -- the clear evicted it -- and that is fine here. A @ManyToOne
+        // only needs the id to write the foreign key, and the price was already loaded.
         Booking booking = new Booking(
                 nextReference(),
                 flight,
@@ -82,19 +94,25 @@ public class BookingService {
         return bookingRepository.save(booking);
     }
 
+    /**
+     * Cancel still takes an explicit lock, and that is not inconsistency.
+     *
+     * <p>Releasing a seat has no condition to push into a WHERE clause -- there is no "only if"
+     * about giving one back. What it does have is a read-decide-write spanning two entities,
+     * which is exactly the shape a transaction-long lock exists to protect.
+     */
     @Transactional
     public Booking cancel(Long id) {
         Booking booking = findById(id);
         BookingStatus current = booking.getStatus();
 
-        // Checked before the lock, not after: a doomed request shouldn't make everyone
-        // else queue behind a row lock it was never going to use.
+        // Checked before the lock, not after: a doomed request should not make everyone else
+        // queue behind a row lock it was never going to use.
         if (!current.canTransitionTo(BookingStatus.CANCELLED)) {
             throw new IllegalBookingTransitionException(booking.getReference(), current, BookingStatus.CANCELLED);
         }
 
         if (current.releasesSeatsOnTransitionTo(BookingStatus.CANCELLED)) {
-            // Lock the flight before touching its seat counter, same reasoning as create().
             Flight flight = flightRepository.findByIdForUpdate(booking.getFlight().getId())
                     .orElseThrow(() -> ResourceNotFoundException.flight(booking.getFlight().getId()));
             flight.releaseSeats(booking.getSeatsBooked());
@@ -110,8 +128,8 @@ public class BookingService {
     public void delete(Long id) {
         Booking booking = findById(id);
 
-        // Ask the state, not "is it cancelled". An expired hold has already returned its
-        // seats and was never cancelled, so the old check would have credited them twice.
+        // Ask the state, not "is it cancelled". An expired hold has already returned its seats
+        // and was never cancelled, so the old check would have credited them twice.
         if (booking.holdsSeats()) {
             Flight flight = flightRepository.findByIdForUpdate(booking.getFlight().getId())
                     .orElseThrow(() -> ResourceNotFoundException.flight(booking.getFlight().getId()));
