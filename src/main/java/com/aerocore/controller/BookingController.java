@@ -3,6 +3,7 @@ package com.aerocore.controller;
 import com.aerocore.dto.BookingRequest;
 import com.aerocore.dto.BookingResponse;
 import com.aerocore.service.BookingService;
+import com.aerocore.service.IdempotentBookingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -20,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import org.springframework.web.bind.annotation.RequestHeader;
+
 import java.net.URI;
 import java.util.List;
 
@@ -30,9 +33,12 @@ import java.util.List;
 public class BookingController {
 
     private final BookingService bookingService;
+     private final IdempotentBookingService idempotentBookingService;
 
-    public BookingController(BookingService bookingService) {
-        this.bookingService = bookingService;
+       public BookingController(BookingService bookingService,
+                         IdempotentBookingService idempotentBookingService) {
+    this.bookingService = bookingService;
+    this.idempotentBookingService = idempotentBookingService;
     }
 
     @GetMapping
@@ -60,12 +66,15 @@ public class BookingController {
     }
 
     @PostMapping
-    @Operation(summary = "Reserve seats on a flight")
-    public ResponseEntity<BookingResponse> create(@Valid @RequestBody BookingRequest request,
-                                                  UriComponentsBuilder uriBuilder) {
-        BookingResponse created = BookingResponse.from(bookingService.create(request));
-        URI location = uriBuilder.path("/api/bookings/{id}").buildAndExpand(created.id()).toUri();
-        return ResponseEntity.created(location).body(created);
+    public ResponseEntity<BookingResponse> create(
+        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+        @Valid @RequestBody BookingRequest request,
+        UriComponentsBuilder uriBuilder) {
+
+    BookingResponse created = idempotentBookingService.create(idempotencyKey, request);
+
+    URI location = uriBuilder.path("/api/bookings/{id}").buildAndExpand(created.id()).toUri();
+    return ResponseEntity.created(location).body(created);
     }
 
     @PostMapping("/{id}/cancel")

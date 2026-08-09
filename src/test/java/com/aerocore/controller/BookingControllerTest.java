@@ -15,6 +15,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import com.aerocore.service.IdempotentBookingService;
+import com.aerocore.dto.BookingResponse;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -35,7 +37,9 @@ class BookingControllerTest {
 
     @MockBean
     private BookingService bookingService;
-
+     
+     @MockBean
+     private IdempotentBookingService idempotentBookingService;
     private String json(Object body) throws Exception {
         return objectMapper.writeValueAsString(body);
     }
@@ -43,20 +47,22 @@ class BookingControllerTest {
     @Test
     @DisplayName("returns 201 with a Location header and the booking reference")
     void createsBooking() throws Exception {
-        Flight flight = TestFixtures.flight(1L);
-        Booking booking = TestFixtures.booking(10L, flight, 2);
-        when(bookingService.create(any(BookingRequest.class))).thenReturn(booking);
+    Flight flight = TestFixtures.flight(1L);
+    Booking booking = TestFixtures.booking(10L, flight, 2);
 
-        BookingRequest request = new BookingRequest(1L, "Vijeta Kanwar",
-                "vijeta@example.com", "9876543210", 2);
+    when(idempotentBookingService.create(any(), any(BookingRequest.class)))
+            .thenReturn(BookingResponse.from(booking));
 
-        mockMvc.perform(post("/api/bookings")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(request)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.reference").value("AT-7F3K2Q"))
-                .andExpect(jsonPath("$.status").value("CONFIRMED"));
-    }
+    BookingRequest request = new BookingRequest(1L, "Vijeta Kanwar",
+            "vijeta@example.com", "9876543210", 2);
+
+    mockMvc.perform(post("/api/bookings")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(json(request)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.reference").value("AT-7F3K2Q"))
+            .andExpect(jsonPath("$.status").value("CONFIRMED"));
+   }
 
     @Test
     @DisplayName("returns 400 and names the offending field when the email is malformed")
@@ -87,8 +93,8 @@ class BookingControllerTest {
     @Test
     @DisplayName("returns 409, not 500, when the flight is full")
     void reportsOverbookingAsConflict() throws Exception {
-        when(bookingService.create(any(BookingRequest.class)))
-                .thenThrow(new InsufficientSeatsException(5, 2));
+       when(idempotentBookingService.create(any(), any(BookingRequest.class)))
+        .thenThrow(new InsufficientSeatsException(5, 2));
 
         BookingRequest request = new BookingRequest(1L, "Vijeta Kanwar",
                 "vijeta@example.com", "9876543210", 5);
@@ -103,8 +109,8 @@ class BookingControllerTest {
     @Test
     @DisplayName("returns 404, not 500, when the flight does not exist")
     void reportsUnknownFlightAsNotFound() throws Exception {
-        when(bookingService.create(any(BookingRequest.class)))
-                .thenThrow(ResourceNotFoundException.flight(99L));
+        when(idempotentBookingService.create(any(), any(BookingRequest.class)))
+        .thenThrow(ResourceNotFoundException.flight(99L));
 
         BookingRequest request = new BookingRequest(99L, "Vijeta Kanwar",
                 "vijeta@example.com", "9876543210", 1);

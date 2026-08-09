@@ -53,7 +53,17 @@ public ResponseEntity<ApiError> handleConflict(RuntimeException ex, HttpServletR
                 fields);
         return ResponseEntity.badRequest().body(body);
     }
+  @ExceptionHandler(IdempotencyKeyReusedException.class)
+  public ResponseEntity<ApiError> handleKeyReuse(IdempotencyKeyReusedException ex,
+                                               HttpServletRequest request) {
+    return build(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), request);
+   }
 
+   @ExceptionHandler(RequestInProgressException.class)
+    public ResponseEntity<ApiError> handleInProgress(RequestInProgressException ex,
+                                                 HttpServletRequest request) {
+    return build(HttpStatus.CONFLICT, ex.getMessage(), request);
+    }
     /** Query/path parameter violations arrive here, not as MethodArgumentNotValidException. */
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ApiError> handleParamValidation(ConstraintViolationException ex,
