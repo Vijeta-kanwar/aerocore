@@ -9,7 +9,7 @@ import java.util.Optional;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.time.Instant;
-
+import org.springframework.data.domain.Pageable;
 
 public interface BookingRepository extends JpaRepository<Booking, Long> {
 
@@ -40,4 +40,20 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
          FOR UPDATE SKIP LOCKED
         """, nativeQuery = true)
 List<Booking> claimExpiredHolds(@Param("now") Instant now, @Param("batchSize") int batchSize);
+
+/**
+ * Bookings that reached the gateway and never got an answer.
+ *
+ * <p>No FOR UPDATE here, unlike the sweeper's claim query. The next step is a network call,
+ * and a lock held across that is the mistake this whole design avoids. Two replicas may
+ * therefore look up the same reference -- wasteful but harmless, because lookups are reads
+ * and the write that follows re-checks the status before acting.
+ */
+@Query("""
+        SELECT b FROM Booking b
+         WHERE b.status = com.aerocore.model.BookingStatus.PAYMENT_PENDING
+           AND b.bookedAt < :cutoff
+         ORDER BY b.bookedAt
+        """)
+List<Booking> findUnresolvedPayments(@Param("cutoff") Instant cutoff, Pageable pageable);
 }
