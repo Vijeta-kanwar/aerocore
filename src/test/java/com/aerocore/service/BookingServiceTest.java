@@ -18,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.api.BeforeEach;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -44,7 +45,6 @@ class BookingServiceTest {
     @Mock
     private BookingReferenceGenerator referenceGenerator;
 
-    @InjectMocks
     private BookingService bookingService;
 
     private BookingRequest requestFor(long flightId, int seats) {
@@ -53,7 +53,7 @@ class BookingServiceTest {
 
     @Test
     @DisplayName("confirms the booking and decrements the flight's seat count")
-    void createsBookingAndReservesSeats() {
+    void createsPendingHoldAndReservesSeats() {
         Flight flight = TestFixtures.flight(1L, 180, 100);
        when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
        when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(1);
@@ -61,9 +61,9 @@ class BookingServiceTest {
         when(bookingRepository.existsByReference("AT-7F3K2Q")).thenReturn(false);
         when(bookingRepository.save(any(Booking.class))).thenAnswer(call -> call.getArgument(0));
 
-        Booking booking = bookingService.create(requestFor(1L, 3));
+        Booking booking = bookingService.createHold(requestFor(1L, 3));
 
-        assertThat(booking.getStatus()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.PENDING);
         assertThat(booking.getSeatsBooked()).isEqualTo(3);
         verify(flightRepository).reserveSeats(1L, 3);
     }
@@ -78,7 +78,7 @@ class BookingServiceTest {
         when(bookingRepository.existsByReference("AT-7F3K2Q")).thenReturn(false);
         when(bookingRepository.save(any(Booking.class))).thenAnswer(call -> call.getArgument(0));
 
-        Booking booking = bookingService.create(requestFor(1L, 3));
+        Booking booking = bookingService.createHold(requestFor(1L, 3));
 
         assertThat(booking.getTotalAmount()).isEqualByComparingTo(new BigDecimal("16497.00"));
     }
@@ -96,7 +96,7 @@ class BookingServiceTest {
         BookingRequest request = new BookingRequest(1L, "Vijeta Kanwar",
                 "  Vijeta@Example.COM  ", "9876543210", 1);
 
-        Booking booking = bookingService.create(request);
+        Booking booking = bookingService.createHold(request);
 
         assertThat(booking.getPassengerEmail()).isEqualTo("vijeta@example.com");
     }
@@ -108,7 +108,7 @@ class BookingServiceTest {
         when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
         when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(0);
 
-        assertThatThrownBy(() -> bookingService.create(requestFor(1L, 5)))
+        assertThatThrownBy(() -> bookingService.createHold(requestFor(1L, 5)))
                 .isInstanceOf(InsufficientSeatsException.class)
                 .hasMessageContaining("only 2 remain");
 
@@ -124,7 +124,7 @@ class BookingServiceTest {
     when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
     when(flightRepository.reserveSeats(eq(1L), anyInt())).thenReturn(1);
 
-    bookingService.create(requestFor(1L, 2));
+    bookingService.createHold(requestFor(1L, 2));
 
     verify(flightRepository).reserveSeats(1L, 2);
     verify(flightRepository, never()).findByIdForUpdate(any());
@@ -134,7 +134,7 @@ class BookingServiceTest {
     void rejectsUnknownFlight() {
 
         when(flightRepository.findById(99L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> bookingService.create(requestFor(99L, 1)))
+        assertThatThrownBy(() -> bookingService.createHold(requestFor(99L, 1)))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("99");
     }
@@ -151,7 +151,7 @@ class BookingServiceTest {
         when(bookingRepository.save(any(Booking.class))).thenAnswer(call -> call.getArgument(0));
 
         ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
-        bookingService.create(requestFor(1L, 1));
+        bookingService.createHold(requestFor(1L, 1));
         verify(bookingRepository).save(saved.capture());
 
         assertThat(saved.getValue().getReference()).isEqualTo("AT-BBBBBB");
@@ -200,4 +200,14 @@ class BookingServiceTest {
 
         assertThat(flight.getAvailableSeats()).isEqualTo(180);
     }
+
+    @BeforeEach
+    void setUp() {
+    bookingService = new BookingService(
+            bookingRepository,
+            flightRepository,
+            referenceGenerator,
+            10
+    );
+}
 }

@@ -14,6 +14,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 
 @Entity
@@ -24,7 +25,7 @@ public class Booking {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** Human-quotable reference, e.g. AT-7F3K2Q. Unique, shown instead of the raw id. */
+    /** Human-quotable reference, e.g. AT-7F3K2Q. Doubles as the gateway's idempotency key. */
     @Column(nullable = false, unique = true, length = 12)
     private String reference;
 
@@ -49,12 +50,14 @@ public class Booking {
     private BigDecimal totalAmount;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 16)
+    @Column(nullable = false, length = 20)
     private BookingStatus status;
 
-    /** Only ever set while PENDING; the database constraint enforces that. */
     @Column(name = "hold_expires_at")
     private Instant holdExpiresAt;
+
+    @Column(name = "payment_charge_id", length = 64)
+    private String paymentChargeId;
 
     @Column(name = "booked_at", nullable = false)
     private Instant bookedAt;
@@ -63,8 +66,16 @@ public class Booking {
         // required by JPA
     }
 
+    /**
+     * A booking now starts life as an unpaid hold, not a confirmed seat.
+     *
+     * <p>Until payment existed, "created" and "confirmed" were the same moment. They aren't
+     * any more: the seat is reserved here, but nobody has paid for it, and if nobody does the
+     * sweeper takes it back at holdExpiresAt.
+     */
     public Booking(String reference, Flight flight, String passengerName, String passengerEmail,
-                   String passengerPhone, int seatsBooked, BigDecimal totalAmount) {
+                   String passengerPhone, int seatsBooked, BigDecimal totalAmount,
+                   Duration holdFor) {
         this.reference = reference;
         this.flight = flight;
         this.passengerName = passengerName;
@@ -72,16 +83,16 @@ public class Booking {
         this.passengerPhone = passengerPhone;
         this.seatsBooked = seatsBooked;
         this.totalAmount = totalAmount;
-        this.status = BookingStatus.CONFIRMED;
+        this.status = BookingStatus.PENDING;
+        this.holdExpiresAt = Instant.now().plus(holdFor);
         this.bookedAt = Instant.now();
     }
 
     /**
      * The only door a status change goes through.
      *
-     * <p>There is deliberately no setStatus(). If callers could assign the field
-     * directly the transition table would be advice rather than a rule, and the
-     * first person in a hurry would route around it.
+     * <p>There is deliberately no setStatus(). If callers could assign the field directly the
+     * transition table would be advice rather than a rule.
      */
     public void transitionTo(BookingStatus target) {
         if (!status.canTransitionTo(target)) {
@@ -89,15 +100,21 @@ public class Booking {
         }
         this.status = target;
 
-        // Clearing the deadline isn't housekeeping. ck_bookings_hold_expiry rejects a
-        // live deadline on any settled row, so forgetting this line fails the commit.
-        if (target != BookingStatus.PENDING) {
+        // Clearing the deadline isn't housekeeping. ck_bookings_hold_expiry rejects a live
+        // deadline on a settled row, so forgetting this line fails the commit.
+        if (!target.carriesDeadline()) {
             this.holdExpiresAt = null;
         }
     }
 
-    public void confirm() {
+    /** Marks the booking as untouchable by the sweeper, just before the gateway is called. */
+    public void beginPayment() {
+        transitionTo(BookingStatus.PAYMENT_PENDING);
+    }
+
+    public void confirm(String chargeId) {
         transitionTo(BookingStatus.CONFIRMED);
+        this.paymentChargeId = chargeId;
     }
 
     public void cancel() {
@@ -108,18 +125,13 @@ public class Booking {
         transitionTo(BookingStatus.EXPIRED);
     }
 
-    /**
-     * Whether this booking is still occupying seats on its flight.
-     *
-     * <p>Replaces isCancelled(), which happened to give the right answer only while
-     * CANCELLED was the sole way for a booking to end.
-     */
+    /** Whether this booking is still occupying seats on its flight. */
     public boolean holdsSeats() {
         return status.holdsSeats();
     }
 
     public boolean isHoldExpired(Instant now) {
-        return status == BookingStatus.PENDING && holdExpiresAt.isBefore(now);
+        return holdExpiresAt != null && holdExpiresAt.isBefore(now);
     }
 
     public Long getId() {
@@ -160,6 +172,10 @@ public class Booking {
 
     public Instant getHoldExpiresAt() {
         return holdExpiresAt;
+    }
+
+    public String getPaymentChargeId() {
+        return paymentChargeId;
     }
 
     public Instant getBookedAt() {

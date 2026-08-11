@@ -104,4 +104,9 @@ public ResponseEntity<ApiError> handleConflict(RuntimeException ex, HttpServletR
         ApiError body = ApiError.of(status.value(), status.getReasonPhrase(), message, request.getRequestURI());
         return ResponseEntity.status(status).body(body);
     }
+
+    @ExceptionHandler(PaymentFailedException.class)
+     public ResponseEntity<ApiError> handlePaymentFailed(PaymentFailedException ex, HttpServletRequest request) {
+    return build(HttpStatus.PAYMENT_REQUIRED, ex.getMessage(), request);
+}
 }

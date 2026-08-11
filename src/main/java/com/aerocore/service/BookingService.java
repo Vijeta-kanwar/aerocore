@@ -11,6 +11,8 @@ import com.aerocore.repository.BookingRepository;
 import com.aerocore.repository.FlightRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Value;
+import java.time.Duration;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -22,14 +24,8 @@ public class BookingService {
     private final BookingRepository bookingRepository;
     private final FlightRepository flightRepository;
     private final BookingReferenceGenerator referenceGenerator;
-
-    public BookingService(BookingRepository bookingRepository,
-                          FlightRepository flightRepository,
-                          BookingReferenceGenerator referenceGenerator) {
-        this.bookingRepository = bookingRepository;
-        this.flightRepository = flightRepository;
-        this.referenceGenerator = referenceGenerator;
-    }
+    private final Duration holdDuration;
+   
 
     public List<Booking> findAll() {
         return bookingRepository.findAll();
@@ -60,8 +56,21 @@ public class BookingService {
      * question -- does this flight exist at all -- because reserveSeats returning zero cannot
      * tell "full" from "no such flight", and those are a 409 and a 404.
      */
+    
+
+public BookingService(BookingRepository bookingRepository,
+                      FlightRepository flightRepository,
+                      BookingReferenceGenerator referenceGenerator,
+                      @Value("${aerocore.holds.duration-minutes:10}") long holdMinutes) {
+    // ...existing assignments
+    this.bookingRepository = bookingRepository;
+    this.flightRepository = flightRepository;
+    this.referenceGenerator = referenceGenerator;
+    this.holdDuration = Duration.ofMinutes(holdMinutes);
+}
+
     @Transactional
-    public Booking create(BookingRequest request) {
+    public Booking createHold(BookingRequest request) {
         // Establishes existence and gives us the price. Its seat count is deliberately unused:
         // any value read separately from the write is stale the moment we hold it.
         Flight flight = flightRepository.findById(request.flightId())
@@ -89,7 +98,8 @@ public class BookingService {
                 request.passengerEmail().trim().toLowerCase(),
                 request.passengerPhone().trim(),
                 request.seatsBooked(),
-                total);
+                total,
+                holdDuration);
 
         return bookingRepository.save(booking);
     }

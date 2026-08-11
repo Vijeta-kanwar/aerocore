@@ -2,8 +2,8 @@ package com.aerocore.controller;
 
 import com.aerocore.dto.BookingRequest;
 import com.aerocore.dto.BookingResponse;
+import com.aerocore.service.BookingCheckoutService;
 import com.aerocore.service.BookingService;
-import com.aerocore.service.IdempotentBookingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -16,12 +16,11 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
-
-import org.springframework.web.bind.annotation.RequestHeader;
 
 import java.net.URI;
 import java.util.List;
@@ -33,18 +32,23 @@ import java.util.List;
 public class BookingController {
 
     private final BookingService bookingService;
-     private final IdempotentBookingService idempotentBookingService;
+    private final BookingCheckoutService bookingCheckoutService;
 
-       public BookingController(BookingService bookingService,
-                         IdempotentBookingService idempotentBookingService) {
-    this.bookingService = bookingService;
-    this.idempotentBookingService = idempotentBookingService;
+    public BookingController(
+            BookingService bookingService,
+            BookingCheckoutService bookingCheckoutService) {
+
+        this.bookingService = bookingService;
+        this.bookingCheckoutService = bookingCheckoutService;
     }
 
     @GetMapping
     @Operation(summary = "List every booking")
     public List<BookingResponse> list() {
-        return bookingService.findAll().stream().map(BookingResponse::from).toList();
+        return bookingService.findAll()
+                .stream()
+                .map(BookingResponse::from)
+                .toList();
     }
 
     @GetMapping("/{id}")
@@ -56,25 +60,40 @@ public class BookingController {
     @GetMapping("/reference/{reference}")
     @Operation(summary = "Look up a booking by its printed reference")
     public BookingResponse getByReference(@PathVariable String reference) {
-        return BookingResponse.from(bookingService.findByReference(reference));
+        return BookingResponse.from(
+                bookingService.findByReference(reference)
+        );
     }
 
     @GetMapping("/passenger")
     @Operation(summary = "List a passenger's bookings by email")
-    public List<BookingResponse> byPassenger(@RequestParam @NotBlank @Email String email) {
-        return bookingService.findByEmail(email).stream().map(BookingResponse::from).toList();
+    public List<BookingResponse> byPassenger(
+            @RequestParam @NotBlank @Email String email) {
+
+        return bookingService.findByEmail(email)
+                .stream()
+                .map(BookingResponse::from)
+                .toList();
     }
 
     @PostMapping
     public ResponseEntity<BookingResponse> create(
-        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-        @Valid @RequestBody BookingRequest request,
-        UriComponentsBuilder uriBuilder) {
+            @RequestHeader(value = "Idempotency-Key", required = false)
+            String idempotencyKey,
+            @Valid @RequestBody BookingRequest request,
+            UriComponentsBuilder uriBuilder) {
 
-    BookingResponse created = idempotentBookingService.create(idempotencyKey, request);
+        BookingResponse created =
+                bookingCheckoutService.checkout(idempotencyKey, request);
 
-    URI location = uriBuilder.path("/api/bookings/{id}").buildAndExpand(created.id()).toUri();
-    return ResponseEntity.created(location).body(created);
+        URI location = uriBuilder
+                .path("/api/bookings/{id}")
+                .buildAndExpand(created.id())
+                .toUri();
+
+        return ResponseEntity
+                .created(location)
+                .body(created);
     }
 
     @PostMapping("/{id}/cancel")

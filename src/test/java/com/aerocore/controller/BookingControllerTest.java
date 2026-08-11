@@ -2,10 +2,12 @@ package com.aerocore.controller;
 
 import com.aerocore.TestFixtures;
 import com.aerocore.dto.BookingRequest;
+import com.aerocore.dto.BookingResponse;
 import com.aerocore.exception.InsufficientSeatsException;
 import com.aerocore.exception.ResourceNotFoundException;
 import com.aerocore.model.Booking;
 import com.aerocore.model.Flight;
+import com.aerocore.service.BookingCheckoutService;
 import com.aerocore.service.BookingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -15,8 +17,6 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import com.aerocore.service.IdempotentBookingService;
-import com.aerocore.dto.BookingResponse;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -37,38 +37,51 @@ class BookingControllerTest {
 
     @MockBean
     private BookingService bookingService;
-     
-     @MockBean
-     private IdempotentBookingService idempotentBookingService;
+
+    @MockBean
+    private BookingCheckoutService bookingCheckoutService;
+
     private String json(Object body) throws Exception {
         return objectMapper.writeValueAsString(body);
     }
 
     @Test
-    @DisplayName("returns 201 with a Location header and the booking reference")
-    void createsBooking() throws Exception {
-    Flight flight = TestFixtures.flight(1L);
-    Booking booking = TestFixtures.booking(10L, flight, 2);
+    @DisplayName("returns 201 with a Location header and a PENDING booking")
+    void createsPendingHold() throws Exception {
+        Flight flight = TestFixtures.flight(1L);
+        Booking booking = TestFixtures.booking(10L, flight, 2);
 
-    when(idempotentBookingService.create(any(), any(BookingRequest.class)))
-            .thenReturn(BookingResponse.from(booking));
+        when(bookingCheckoutService.checkout(
+                any(),
+                any(BookingRequest.class)))
+                .thenReturn(BookingResponse.from(booking));
 
-    BookingRequest request = new BookingRequest(1L, "Vijeta Kanwar",
-            "vijeta@example.com", "9876543210", 2);
+        BookingRequest request = new BookingRequest(
+                1L,
+                "Vijeta Kanwar",
+                "vijeta@example.com",
+                "9876543210",
+                2
+        );
 
-    mockMvc.perform(post("/api/bookings")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(json(request)))
-            .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.reference").value("AT-7F3K2Q"))
-            .andExpect(jsonPath("$.status").value("CONFIRMED"));
-   }
+        mockMvc.perform(post("/api/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.reference").value("AT-TEST-10"))
+                .andExpect(jsonPath("$.status").value("PENDING"));
+    }
 
     @Test
     @DisplayName("returns 400 and names the offending field when the email is malformed")
     void rejectsInvalidEmail() throws Exception {
-        BookingRequest request = new BookingRequest(1L, "Vijeta Kanwar",
-                "not-an-email", "9876543210", 2);
+        BookingRequest request = new BookingRequest(
+                1L,
+                "Vijeta Kanwar",
+                "not-an-email",
+                "9876543210",
+                2
+        );
 
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -80,8 +93,13 @@ class BookingControllerTest {
     @Test
     @DisplayName("returns 400 when seat count is below one")
     void rejectsZeroSeats() throws Exception {
-        BookingRequest request = new BookingRequest(1L, "Vijeta Kanwar",
-                "vijeta@example.com", "9876543210", 0);
+        BookingRequest request = new BookingRequest(
+                1L,
+                "Vijeta Kanwar",
+                "vijeta@example.com",
+                "9876543210",
+                0
+        );
 
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -93,27 +111,42 @@ class BookingControllerTest {
     @Test
     @DisplayName("returns 409, not 500, when the flight is full")
     void reportsOverbookingAsConflict() throws Exception {
-       when(idempotentBookingService.create(any(), any(BookingRequest.class)))
-        .thenThrow(new InsufficientSeatsException(5, 2));
+        when(bookingCheckoutService.checkout(
+                any(),
+                any(BookingRequest.class)))
+                .thenThrow(new InsufficientSeatsException(5, 2));
 
-        BookingRequest request = new BookingRequest(1L, "Vijeta Kanwar",
-                "vijeta@example.com", "9876543210", 5);
+        BookingRequest request = new BookingRequest(
+                1L,
+                "Vijeta Kanwar",
+                "vijeta@example.com",
+                "9876543210",
+                5
+        );
 
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(request)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("only 2 remain")));
+                .andExpect(jsonPath("$.message")
+                        .value(org.hamcrest.Matchers.containsString("only 2 remain")));
     }
 
     @Test
     @DisplayName("returns 404, not 500, when the flight does not exist")
     void reportsUnknownFlightAsNotFound() throws Exception {
-        when(idempotentBookingService.create(any(), any(BookingRequest.class)))
-        .thenThrow(ResourceNotFoundException.flight(99L));
+        when(bookingCheckoutService.checkout(
+                any(),
+                any(BookingRequest.class)))
+                .thenThrow(ResourceNotFoundException.flight(99L));
 
-        BookingRequest request = new BookingRequest(99L, "Vijeta Kanwar",
-                "vijeta@example.com", "9876543210", 1);
+        BookingRequest request = new BookingRequest(
+                99L,
+                "Vijeta Kanwar",
+                "vijeta@example.com",
+                "9876543210",
+                1
+        );
 
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -125,7 +158,10 @@ class BookingControllerTest {
     @Test
     @DisplayName("returns 400 when the passenger email query parameter is malformed")
     void rejectsInvalidPassengerLookup() throws Exception {
-        mockMvc.perform(get("/api/bookings/passenger").param("email", "nonsense"))
+        mockMvc.perform(
+                        get("/api/bookings/passenger")
+                                .param("email", "nonsense")
+                )
                 .andExpect(status().isBadRequest());
     }
 }

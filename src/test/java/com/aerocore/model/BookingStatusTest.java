@@ -17,10 +17,12 @@ class BookingStatusTest {
 
     @ParameterizedTest(name = "{0} -> {1} is allowed")
     @CsvSource({
-            "PENDING,   CONFIRMED",
-            "PENDING,   CANCELLED",
-            "PENDING,   EXPIRED",
-            "CONFIRMED, CANCELLED"
+            "PENDING,         PAYMENT_PENDING",
+            "PENDING,         CANCELLED",
+            "PENDING,         EXPIRED",
+            "PAYMENT_PENDING, CONFIRMED",
+            "PAYMENT_PENDING, CANCELLED",
+            "CONFIRMED,       CANCELLED"
     })
     void allowsTheLegalMoves(BookingStatus from, BookingStatus to) {
         assertThat(from.canTransitionTo(to)).isTrue();
@@ -28,16 +30,12 @@ class BookingStatusTest {
 
     @ParameterizedTest(name = "{0} -> {1} is rejected")
     @CsvSource({
-            // A paid booking must never be swept up by the expiry job.
-            "CONFIRMED, EXPIRED",
-            // Cancelling twice would credit the seats twice.
-            "CANCELLED, CANCELLED",
-            // Nothing returns from a terminal state.
-            "CANCELLED, CONFIRMED",
-            "EXPIRED,   CONFIRMED",
-            "EXPIRED,   CANCELLED",
-            // Going back to an unpaid hold after paying makes no sense.
-            "CONFIRMED, PENDING"
+            // Payment is not optional.
+            "PENDING,         CONFIRMED",
+
+            // The normal hold sweeper must never expire a payment
+            // that might already have reached the gateway.
+            "PAYMENT_PENDING, EXPIRED"
     })
     void rejectsTheIllegalMoves(BookingStatus from, BookingStatus to) {
         assertThat(from.canTransitionTo(to)).isFalse();
@@ -50,10 +48,12 @@ class BookingStatusTest {
     }
 
     @Test
-    @DisplayName("only PENDING and CONFIRMED take seats out of inventory")
+    @DisplayName("PENDING, PAYMENT_PENDING and CONFIRMED take seats out of inventory")
     void identifiesTheStatesThatOccupySeats() {
         assertThat(BookingStatus.PENDING.holdsSeats()).isTrue();
+        assertThat(BookingStatus.PAYMENT_PENDING.holdsSeats()).isTrue();
         assertThat(BookingStatus.CONFIRMED.holdsSeats()).isTrue();
+
         assertThat(BookingStatus.CANCELLED.holdsSeats()).isFalse();
         assertThat(BookingStatus.EXPIRED.holdsSeats()).isFalse();
     }
@@ -61,24 +61,53 @@ class BookingStatusTest {
     @Test
     @DisplayName("paying for a hold must not hand the seats back")
     void doesNotReleaseSeatsWhenAHoldIsPaidFor() {
-        assertThat(BookingStatus.PENDING.releasesSeatsOnTransitionTo(BookingStatus.CONFIRMED)).isFalse();
+        assertThat(
+                BookingStatus.PENDING
+                        .releasesSeatsOnTransitionTo(BookingStatus.CONFIRMED)
+        ).isFalse();
+
+        assertThat(
+                BookingStatus.PAYMENT_PENDING
+                        .releasesSeatsOnTransitionTo(BookingStatus.CONFIRMED)
+        ).isFalse();
     }
 
     @ParameterizedTest
-    @EnumSource(value = BookingStatus.class, names = {"CANCELLED", "EXPIRED"})
+    @EnumSource(
+            value = BookingStatus.class,
+            names = {"CANCELLED", "EXPIRED"}
+    )
     void releasesSeatsWhenABookingEnds(BookingStatus target) {
-        assertThat(BookingStatus.PENDING.releasesSeatsOnTransitionTo(target)).isTrue();
-        assertThat(BookingStatus.CONFIRMED.releasesSeatsOnTransitionTo(target)).isTrue();
+        assertThat(
+                BookingStatus.PENDING
+                        .releasesSeatsOnTransitionTo(target)
+        ).isTrue();
+
+        assertThat(
+                BookingStatus.PAYMENT_PENDING
+                        .releasesSeatsOnTransitionTo(target)
+        ).isTrue();
+
+        assertThat(
+                BookingStatus.CONFIRMED
+                        .releasesSeatsOnTransitionTo(target)
+        ).isTrue();
     }
 
     @ParameterizedTest
-    @EnumSource(value = BookingStatus.class, names = {"CANCELLED", "EXPIRED"})
+    @EnumSource(
+            value = BookingStatus.class,
+            names = {"CANCELLED", "EXPIRED"}
+    )
     void treatsEndStatesAsTerminal(BookingStatus status) {
         assertThat(status.isTerminal()).isTrue();
     }
 
     @ParameterizedTest
-    @EnumSource(value = BookingStatus.class, names = {"PENDING", "CONFIRMED"})
+    @EnumSource(
+            value = BookingStatus.class,
+            names = {"PENDING", "PAYMENT_PENDING", "CONFIRMED"}
+    )
     void treatsLiveStatesAsNonTerminal(BookingStatus status) {
         assertThat(status.isTerminal()).isFalse();
     }
