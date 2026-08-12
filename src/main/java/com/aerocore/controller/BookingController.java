@@ -6,9 +6,10 @@ import com.aerocore.service.BookingCheckoutService;
 import com.aerocore.service.BookingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
+
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -18,7 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
+
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -45,7 +46,7 @@ public class BookingController {
     @GetMapping
     @Operation(summary = "List every booking")
     public List<BookingResponse> list() {
-        return bookingService.findAll()
+        return bookingService.findMine()
                 .stream()
                 .map(BookingResponse::from)
                 .toList();
@@ -65,16 +66,10 @@ public class BookingController {
         );
     }
 
-    @GetMapping("/passenger")
-    @Operation(summary = "List a passenger's bookings by email")
-    public List<BookingResponse> byPassenger(
-            @RequestParam @NotBlank @Email String email) {
-
-        return bookingService.findByEmail(email)
-                .stream()
-                .map(BookingResponse::from)
-                .toList();
-    }
+    @GetMapping("/me")
+public List<BookingResponse> myBookings() {
+    return bookingService.findMine().stream().map(BookingResponse::from).toList();
+}
 
     @PostMapping
     public ResponseEntity<BookingResponse> create(

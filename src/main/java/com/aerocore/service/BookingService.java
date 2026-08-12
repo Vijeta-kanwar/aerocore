@@ -17,6 +17,12 @@ import java.time.Duration;
 import java.math.BigDecimal;
 import java.util.List;
 
+import com.aerocore.security.CurrentUser;
+import com.aerocore.model.User;
+import com.aerocore.repository.UserRepository;
+
+import com.aerocore.exception.BookingAccessDeniedException;
+
 @Service
 @Transactional(readOnly = true)
 public class BookingService {
@@ -26,6 +32,7 @@ public class BookingService {
     private final BookingReferenceGenerator referenceGenerator;
     private final Duration holdDuration;
    
+private final UserRepository userRepository; 
 
     public List<Booking> findAll() {
         return bookingRepository.findAll();
@@ -41,8 +48,8 @@ public class BookingService {
                 .orElseThrow(() -> new ResourceNotFoundException("No booking exists with reference " + reference));
     }
 
-    public List<Booking> findByEmail(String email) {
-        return bookingRepository.findByPassengerEmailIgnoreCaseOrderByBookedAtDesc(email.trim());
+    public List<Booking> findMine() {
+    return bookingRepository.findByUserIdOrderByBookedAtDesc(CurrentUser.id());
     }
 
     /**
@@ -60,11 +67,13 @@ public class BookingService {
 
 public BookingService(BookingRepository bookingRepository,
                       FlightRepository flightRepository,
+                      UserRepository userRepository,
                       BookingReferenceGenerator referenceGenerator,
                       @Value("${aerocore.holds.duration-minutes:10}") long holdMinutes) {
     // ...existing assignments
     this.bookingRepository = bookingRepository;
     this.flightRepository = flightRepository;
+    this.userRepository = userRepository;
     this.referenceGenerator = referenceGenerator;
     this.holdDuration = Duration.ofMinutes(holdMinutes);
 }
@@ -88,12 +97,14 @@ public BookingService(BookingRepository bookingRepository,
                     .orElse(0);
             throw new InsufficientSeatsException(request.seatsBooked(), remaining);
         }
-
+         
+         User user = userRepository.getReferenceById(CurrentUser.id());
         // flight is detached now -- the clear evicted it -- and that is fine here. A @ManyToOne
         // only needs the id to write the foreign key, and the price was already loaded.
         Booking booking = new Booking(
                 nextReference(),
                 flight,
+                user,
                 request.passengerName().trim(),
                 request.passengerEmail().trim().toLowerCase(),
                 request.passengerPhone().trim(),
@@ -114,6 +125,10 @@ public BookingService(BookingRepository bookingRepository,
     @Transactional
     public Booking cancel(Long id) {
         Booking booking = findById(id);
+        if (!booking.getUser().getId().equals(CurrentUser.id())
+        && !CurrentUser.isAdmin()) {
+    throw new BookingAccessDeniedException(id);
+}
         BookingStatus current = booking.getStatus();
 
         // Checked before the lock, not after: a doomed request should not make everyone else
@@ -137,7 +152,10 @@ public BookingService(BookingRepository bookingRepository,
     @Transactional
     public void delete(Long id) {
         Booking booking = findById(id);
-
+     if (!booking.getUser().getId().equals(CurrentUser.id())
+        && !CurrentUser.isAdmin()) {
+    throw new BookingAccessDeniedException(id);
+      }
         // Ask the state, not "is it cancelled". An expired hold has already returned its seats
         // and was never cancelled, so the old check would have credited them twice.
         if (booking.holdsSeats()) {

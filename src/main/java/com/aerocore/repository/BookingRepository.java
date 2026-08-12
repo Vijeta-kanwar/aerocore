@@ -18,7 +18,7 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     boolean existsByReference(String reference);
 
     List<Booking> findByPassengerEmailIgnoreCaseOrderByBookedAtDesc(String passengerEmail);
-
+    List<Booking> findByUserIdOrderByBookedAtDesc(Long userId);
 
 /**
  * Claims a batch of dead holds for this replica alone.

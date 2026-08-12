@@ -18,6 +18,13 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.aerocore.security.JwtService;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.security.test.context.support.WithMockUser;
+
+import com.aerocore.security.SecurityConfig;
+import org.springframework.context.annotation.Import;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,6 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(BookingController.class)
+@Import(SecurityConfig.class)
 @DisplayName("POST /api/bookings")
 class BookingControllerTest {
 
@@ -41,11 +49,14 @@ class BookingControllerTest {
     @MockBean
     private BookingCheckoutService bookingCheckoutService;
 
+     @MockBean
+     private JwtService jwtService;
     private String json(Object body) throws Exception {
         return objectMapper.writeValueAsString(body);
     }
 
     @Test
+    @WithMockUser
     @DisplayName("returns 201 with a Location header and a PENDING booking")
     void createsPendingHold() throws Exception {
         Flight flight = TestFixtures.flight(1L);
@@ -63,7 +74,7 @@ class BookingControllerTest {
                 "9876543210",
                 2
         );
-
+        
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(request)))
@@ -73,6 +84,7 @@ class BookingControllerTest {
     }
 
     @Test
+    @WithMockUser
     @DisplayName("returns 400 and names the offending field when the email is malformed")
     void rejectsInvalidEmail() throws Exception {
         BookingRequest request = new BookingRequest(
@@ -82,7 +94,7 @@ class BookingControllerTest {
                 "9876543210",
                 2
         );
-
+        
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(request)))
@@ -91,6 +103,7 @@ class BookingControllerTest {
     }
 
     @Test
+    @WithMockUser
     @DisplayName("returns 400 when seat count is below one")
     void rejectsZeroSeats() throws Exception {
         BookingRequest request = new BookingRequest(
@@ -100,7 +113,7 @@ class BookingControllerTest {
                 "9876543210",
                 0
         );
-
+       
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(request)))
@@ -109,6 +122,7 @@ class BookingControllerTest {
     }
 
     @Test
+    @WithMockUser
     @DisplayName("returns 409, not 500, when the flight is full")
     void reportsOverbookingAsConflict() throws Exception {
         when(bookingCheckoutService.checkout(
@@ -123,7 +137,7 @@ class BookingControllerTest {
                 "9876543210",
                 5
         );
-
+      
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(request)))
@@ -133,6 +147,7 @@ class BookingControllerTest {
     }
 
     @Test
+    @WithMockUser
     @DisplayName("returns 404, not 500, when the flight does not exist")
     void reportsUnknownFlightAsNotFound() throws Exception {
         when(bookingCheckoutService.checkout(
@@ -147,7 +162,7 @@ class BookingControllerTest {
                 "9876543210",
                 1
         );
-
+        
         mockMvc.perform(post("/api/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(request)))
@@ -156,8 +171,10 @@ class BookingControllerTest {
     }
 
     @Test
+    @WithMockUser
     @DisplayName("returns 400 when the passenger email query parameter is malformed")
     void rejectsInvalidPassengerLookup() throws Exception {
+        
         mockMvc.perform(
                         get("/api/bookings/passenger")
                                 .param("email", "nonsense")

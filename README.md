@@ -263,3 +263,6 @@ docker-compose.yml           app + postgres for local work
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+eyJhbGciOiJIUzM4NCJ9.eyJzdWIiOiIyIiwicm9sZSI6IlVTRVIiLCJpYXQiOjE3ODY1MzgwNDgsImV4cCI6MTc4NjUzOTg0OH0.OtNOSQBWbpmq8SO2K1O0j2XBB1AqMfRhf4tgYMmt_4oUuPrgorjRS9_y9OBVVu5x

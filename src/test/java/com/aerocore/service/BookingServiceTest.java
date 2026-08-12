@@ -16,9 +16,19 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
-import org.mockito.Mock;
+
 import org.mockito.junit.jupiter.MockitoExtension;
+
+
+
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import java.util.List;
+import com.aerocore.repository.UserRepository;
+import org.mockito.Mock;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -44,7 +54,9 @@ class BookingServiceTest {
 
     @Mock
     private BookingReferenceGenerator referenceGenerator;
-
+    
+    @Mock
+    private UserRepository userRepository;
     private BookingService bookingService;
 
     private BookingRequest requestFor(long flightId, int seats) {
@@ -201,13 +213,30 @@ class BookingServiceTest {
         assertThat(flight.getAvailableSeats()).isEqualTo(180);
     }
 
-    @BeforeEach
-    void setUp() {
+    
+
+   @BeforeEach
+void setUp() {
     bookingService = new BookingService(
             bookingRepository,
             flightRepository,
+            userRepository,
             referenceGenerator,
             10
     );
+
+    var auth = new UsernamePasswordAuthenticationToken(
+            1L,
+            null,
+            List.of(new SimpleGrantedAuthority("ROLE_USER"))
+    );
+
+    SecurityContextHolder.getContext().setAuthentication(auth);
 }
+
+@AfterEach
+void clearAuthentication() {
+    SecurityContextHolder.clearContext();
+}
+
 }

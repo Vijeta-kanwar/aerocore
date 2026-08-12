@@ -12,6 +12,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.validation.Valid;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -33,6 +34,10 @@ public class Booking {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "flight_id", nullable = false)
     private Flight flight;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+@JoinColumn(name = "user_id", nullable = false)
+private User user;
 
     @Column(name = "passenger_name", nullable = false, length = 120)
     private String passengerName;
@@ -73,11 +78,12 @@ public class Booking {
      * any more: the seat is reserved here, but nobody has paid for it, and if nobody does the
      * sweeper takes it back at holdExpiresAt.
      */
-    public Booking(String reference, Flight flight, String passengerName, String passengerEmail,
-                   String passengerPhone, int seatsBooked, BigDecimal totalAmount,
-                   Duration holdFor) {
+    public Booking(String reference, Flight flight, User user, String passengerName, String passengerEmail,
+               String passengerPhone, int seatsBooked, BigDecimal totalAmount,
+               Duration holdFor)  {
         this.reference = reference;
         this.flight = flight;
+        this.user = user;
         this.passengerName = passengerName;
         this.passengerEmail = passengerEmail;
         this.passengerPhone = passengerPhone;
@@ -181,4 +187,9 @@ public class Booking {
     public Instant getBookedAt() {
         return bookedAt;
     }
+
+    public User getUser() {
+    return user;
+    }
+    
 }

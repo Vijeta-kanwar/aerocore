@@ -22,9 +22,18 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ApiError> handleNotFound(ResourceNotFoundException ex, HttpServletRequest request) {
-        return build(HttpStatus.NOT_FOUND, ex.getMessage(), request);
-    }
+public ResponseEntity<ApiError> handleNotFound(
+        ResourceNotFoundException ex,
+        HttpServletRequest request) {
+    return build(HttpStatus.NOT_FOUND, ex.getMessage(), request);
+}
+
+@ExceptionHandler(BookingAccessDeniedException.class)
+public ResponseEntity<ApiError> handleBookingAccessDenied(
+        BookingAccessDeniedException ex,
+        HttpServletRequest request) {
+    return build(HttpStatus.NOT_FOUND, ex.getMessage(), request);
+}
 
     @ExceptionHandler(InsufficientSeatsException.class)
     public ResponseEntity<ApiError> handleInsufficientSeats(InsufficientSeatsException ex,
@@ -109,4 +118,5 @@ public ResponseEntity<ApiError> handleConflict(RuntimeException ex, HttpServletR
      public ResponseEntity<ApiError> handlePaymentFailed(PaymentFailedException ex, HttpServletRequest request) {
     return build(HttpStatus.PAYMENT_REQUIRED, ex.getMessage(), request);
 }
+
 }

@@ -15,6 +15,10 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.aerocore.security.JwtService;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.security.test.context.support.WithMockUser;
+
 import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.util.List;
@@ -28,7 +32,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.aerocore.security.SecurityConfig;
+import org.springframework.context.annotation.Import;
+
 @WebMvcTest(FlightController.class)
+@Import(SecurityConfig.class)
 @DisplayName("/api/flights")
 class FlightControllerTest {
 
@@ -40,6 +48,9 @@ class FlightControllerTest {
 
     @MockBean
     private FlightService flightService;
+     
+     @MockBean
+     private JwtService jwtService;
 
     @Test
     @DisplayName("lists the schedule")
@@ -82,6 +93,7 @@ class FlightControllerTest {
     }
 
     @Test
+       @WithMockUser(roles = "ADMIN")
     @DisplayName("returns 201 and a Location header for a new flight")
     void createsFlight() throws Exception {
         Flight flight = TestFixtures.flight(1L);
@@ -98,6 +110,7 @@ class FlightControllerTest {
     }
 
     @Test
+    @WithMockUser(roles = "ADMIN")
     @DisplayName("returns 400 for a negative price")
     void rejectsNegativePrice() throws Exception {
         FlightRequest request = new FlightRequest("AI101", "Air India", "Delhi", "Mumbai",
@@ -111,6 +124,7 @@ class FlightControllerTest {
     }
 
     @Test
+    @WithMockUser(roles = "ADMIN")
     @DisplayName("returns 409 for a flight number already in the schedule")
     void reportsDuplicateAsConflict() throws Exception {
         when(flightService.create(any(FlightRequest.class)))
