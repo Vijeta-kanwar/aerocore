@@ -6,7 +6,8 @@
   // and behind an ingress — with no rebuild and no hardcoded host.
   const API = {
     flights:  "/api/flights",
-    bookings: "/api/bookings"
+    bookings: "/api/bookings",
+    auth:     "/api/auth"
   };
 
   const IATA = {
@@ -35,16 +36,26 @@
     formError:    $("form-error"),
     dialogSub:    $("dialog-sub"),
     dialogTitle:  $("dialog-title"),
-    dialogBody:   $("dialog-body")
+    dialogBody:   $("dialog-body"),
+    authDialog:   $("auth-dialog"),
+    authForm:     $("auth-form"),
+    authError:    $("auth-error"),
+    authTitle:    $("auth-title"),
+    authSubmit:   $("auth-submit"),
+    authSwitch:   $("auth-switch"),
+    nameField:    $("name-field"),
+    accountEmail: $("account-email"),
+    signIn:       $("sign-in"),
+    signOut:      $("sign-out")
   };
 
   let selectedFlight = null;
+  let registering = false;
 
-  // One key per intent to book, minted when the dialog opens rather than per
-  // request. That distinction is the whole feature: if the server commits a
-  // booking and the response never gets home, the user retries the same key and
-  // the server recognises it. A key minted inside submitBooking would be fresh
-  // on every retry and the server would happily book twice.
+  // One key per intent to book, minted when the dialog opens rather than per request.
+  // That distinction is the whole feature: if the server commits a booking and the
+  // response never gets home, the user retries with the same key and the server
+  // recognises it. A key minted inside submitBooking would be fresh on every retry.
   let bookingKey = null;
 
   const dialogTemplate = el.dialogBody.innerHTML;
@@ -70,16 +81,39 @@
     ));
   }
 
+  /** Marks an error as "you need to sign in", so callers can react rather than just report. */
+  class NotSignedInError extends Error {
+    constructor() {
+      super("Please sign in to continue.");
+    }
+  }
+
   /**
-   * Every failure path goes through here. The API returns a consistent error
-   * shape, so the user sees what the server actually said instead of "failed".
+   * Every request goes through here. The API returns a consistent error shape, so the user
+   * sees what the server actually said instead of "failed".
+   *
+   * <p>401 and 403 are handled differently on purpose. 401 means the server doesn't know who
+   * we are -- an expired or missing token -- so the stored session is cleared and the sign-in
+   * screen appears. 403 means it knows exactly who we are and this isn't ours; signing in
+   * again would achieve nothing, so the message is shown as-is.
    */
-  async function request(url, options) {
+  async function request(url, options = {}) {
+    const config = {
+      ...options,
+      headers: { ...(options.headers || {}), ...Auth.authHeader() }
+    };
+
     let response;
     try {
-      response = await fetch(url, options);
+      response = await fetch(url, config);
     } catch (networkError) {
       throw new Error("Could not reach the server. Is the application running?");
+    }
+
+    if (response.status === 401) {
+      Auth.clear();
+      renderAccount();
+      throw new NotSignedInError();
     }
 
     if (response.status === 204) return null;
@@ -103,8 +137,84 @@
       "</div>";
   }
 
+  function showSignInPrompt(target, title, detail) {
+    target.innerHTML =
+      '<div class="prompt">' +
+        "<strong>" + escapeHtml(title) + "</strong>" +
+        escapeHtml(detail) +
+        '<div><button class="btn" id="prompt-sign-in">Sign in</button></div>' +
+      "</div>";
+    $("prompt-sign-in").addEventListener("click", () => openAuth(false));
+  }
+
   function showSkeletons(target, n) {
     target.innerHTML = Array.from({ length: n }, () => '<div class="skeleton"></div>').join("");
+  }
+
+  // ---------- account ----------
+
+  function renderAccount() {
+    const signedIn = Auth.isSignedIn();
+    el.accountEmail.textContent = signedIn ? Auth.email() : "";
+    el.signOut.classList.toggle("hidden", !signedIn);
+    el.signIn.classList.toggle("hidden", signedIn);
+  }
+
+  function openAuth(asRegistration) {
+    registering = asRegistration;
+    el.authError.classList.add("hidden");
+    el.authTitle.textContent = registering ? "Create an account" : "Sign in";
+    el.authSubmit.textContent = registering ? "Create account" : "Sign in";
+    el.authSwitch.textContent = registering ? "I already have an account" : "Create an account";
+    el.nameField.classList.toggle("hidden", !registering);
+    $("a-name").required = registering;
+    $("a-password").autocomplete = registering ? "new-password" : "current-password";
+    el.authDialog.showModal();
+  }
+
+  async function submitAuth(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    if (!form.checkValidity()) { form.reportValidity(); return; }
+
+    el.authSubmit.disabled = true;
+    el.authError.classList.add("hidden");
+
+    const payload = {
+      email:    $("a-email").value.trim(),
+      password: $("a-password").value
+    };
+    if (registering) payload.fullName = $("a-name").value.trim();
+
+    try {
+      const session = await request(API.auth + (registering ? "/register" : "/login"), {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(payload)
+      });
+
+      Auth.save(session);
+      renderAccount();
+      el.authDialog.close();
+      form.reset();
+      refreshCurrentView();
+    } catch (error) {
+      el.authError.textContent = error.message;
+      el.authError.classList.remove("hidden");
+    } finally {
+      el.authSubmit.disabled = false;
+    }
+  }
+
+  function signOut() {
+    // Nothing to tell the server: the token is stateless and simply stops being sent.
+    // Revoking it before expiry would need server-side state, which is the trade a refresh
+    // token exists to make.
+    Auth.clear();
+    renderAccount();
+    el.bookings.innerHTML = "";
+    switchTab("search");
   }
 
   // ---------- flights ----------
@@ -163,7 +273,15 @@
     el.results.querySelectorAll("[data-book]").forEach((button) => {
       button.addEventListener("click", () => {
         const flight = flights.find((f) => String(f.id) === button.dataset.book);
-        if (flight) openDialog(flight);
+        if (!flight) return;
+
+        // Asked here rather than after the form is filled in. Making someone type their
+        // details and then telling them to sign in wastes the work they just did.
+        if (!Auth.isSignedIn()) {
+          openAuth(false);
+          return;
+        }
+        openDialog(flight);
       });
     });
   }
@@ -211,6 +329,9 @@
     el.dialogTitle.textContent = "Book " + flight.flightNumber;
     el.dialogSub.textContent =
       flight.origin + " → " + flight.destination + " · " + flight.departureTime + " · " + flight.airline;
+
+    // The passenger is usually the person booking, so prefill and let them change it.
+    $("p-email").value = Auth.email() || "";
 
     const max = Math.min(flight.availableSeats, 9);
     const seats = $("p-seats");
@@ -264,6 +385,13 @@
       showConfirmation(booking);
       refreshCurrentView();
     } catch (error) {
+      if (error instanceof NotSignedInError) {
+        // The token expired while the form was open. Nothing was booked, so send them to
+        // sign in and let them try again with the same key.
+        el.dialog.close();
+        openAuth(false);
+        return;
+      }
       el.formError.textContent = error.message;
       el.formError.classList.remove("hidden");
       button.disabled = false;
@@ -278,7 +406,7 @@
       '<div class="confirm">' +
         '<div class="tick">✓</div>' +
         "<h4>Keep this reference</h4>" +
-        "<p>Quote it at check-in, or use your email to find this booking again.</p>" +
+        "<p>Quote it at check-in, or find it again under My bookings.</p>" +
         '<div class="ref-big">' + escapeHtml(booking.reference) + "</div>" +
         '<div class="dialog-actions" style="justify-content:center">' +
           '<button type="button" class="btn" id="done-btn">Done</button>' +
@@ -290,13 +418,15 @@
   // ---------- my bookings ----------
 
   function bookingRow(booking) {
-    const cancelled = booking.status === "CANCELLED";
+    const status = booking.status;
+    const settled = status === "CANCELLED" || status === "EXPIRED";
+
     return '' +
       '<div class="row">' +
         '<div class="row-main">' +
           '<span class="ref">' + escapeHtml(booking.reference) + "</span>" +
-          '<span class="pill ' + (cancelled ? "cancelled" : "confirmed") + '">' +
-            escapeHtml(booking.status) + "</span>" +
+          '<span class="pill ' + (settled ? "cancelled" : "confirmed") + '">' +
+            escapeHtml(status) + "</span>" +
           '<span class="row-meta">' +
             escapeHtml(booking.flightNumber) + " · " +
             escapeHtml(booking.origin) + " → " + escapeHtml(booking.destination) + " · " +
@@ -304,23 +434,30 @@
             rupees.format(booking.totalAmount) +
           "</span>" +
         "</div>" +
-        (cancelled ? "" :
+        (settled ? "" :
           '<button class="btn btn-sm btn-danger" data-cancel="' + booking.id + '">Cancel booking</button>') +
       "</div>";
   }
 
+  /**
+   * Asks the server for this user's bookings.
+   *
+   * <p>Replaces the old lookup by email, which was itself the vulnerability: anyone could
+   * type any address and read that person's bookings. The identity now comes from the token,
+   * so there is no parameter to tamper with.
+   */
   async function loadBookings() {
-    const email = $("lookup-email").value.trim();
-    if (!email) {
-      showState(el.bookings, "Enter your email", "Bookings are found using the email you booked with.");
+    if (!Auth.isSignedIn()) {
+      showSignInPrompt(el.bookings, "Sign in to see your bookings",
+        "Your bookings are tied to your account, not to an email address you type in.");
       return;
     }
 
     showSkeletons(el.bookings, 2);
     try {
-      const bookings = await request(API.bookings + "/passenger?email=" + encodeURIComponent(email));
+      const bookings = await request(API.bookings + "/me");
       if (!bookings.length) {
-        showState(el.bookings, "Nothing booked with this email", "Check the spelling, or book a flight first.");
+        showState(el.bookings, "Nothing booked yet", "Find a flight and your bookings will appear here.");
         return;
       }
       el.bookings.innerHTML = bookings.map(bookingRow).join("");
@@ -328,6 +465,10 @@
         button.addEventListener("click", () => cancelBooking(button));
       });
     } catch (error) {
+      if (error instanceof NotSignedInError) {
+        showSignInPrompt(el.bookings, "Your session expired", "Sign in again to see your bookings.");
+        return;
+      }
       showState(el.bookings, "Could not load bookings", error.message, true);
     }
   }
@@ -339,6 +480,10 @@
       await request(API.bookings + "/" + button.dataset.cancel + "/cancel", { method: "POST" });
       loadBookings();
     } catch (error) {
+      if (error instanceof NotSignedInError) {
+        showSignInPrompt(el.bookings, "Your session expired", "Sign in again to manage your bookings.");
+        return;
+      }
       button.disabled = false;
       button.textContent = "Cancel booking";
       showState(el.bookings, "Could not cancel", error.message, true);
@@ -355,9 +500,7 @@
     $("panel-bookings").classList.toggle("hidden", searching);
     $("rail").classList.toggle("hidden", !searching);
 
-    if (!searching && !el.bookings.innerHTML) {
-      showState(el.bookings, "Enter your email", "Bookings are found using the email you booked with.");
-    }
+    if (!searching) loadBookings();
   }
 
   function refreshCurrentView() {
@@ -385,9 +528,12 @@
 
   $("tab-search").addEventListener("click", () => switchTab("search"));
   $("tab-bookings").addEventListener("click", () => switchTab("bookings"));
-  $("lookup-btn").addEventListener("click", loadBookings);
-  $("lookup-email").addEventListener("keydown", (e) => { if (e.key === "Enter") loadBookings(); });
   el.bookForm.addEventListener("submit", submitBooking);
+  el.authForm.addEventListener("submit", submitAuth);
+  el.authSwitch.addEventListener("click", () => openAuth(!registering));
+  el.signIn.addEventListener("click", () => openAuth(false));
+  el.signOut.addEventListener("click", signOut);
 
+  renderAccount();
   loadAllFlights();
 })();

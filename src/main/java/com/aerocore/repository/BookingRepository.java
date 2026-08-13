@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.time.Instant;
@@ -18,6 +19,7 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     boolean existsByReference(String reference);
 
     List<Booking> findByPassengerEmailIgnoreCaseOrderByBookedAtDesc(String passengerEmail);
+    @EntityGraph(attributePaths = "flight")
     List<Booking> findByUserIdOrderByBookedAtDesc(Long userId);
 
 /**

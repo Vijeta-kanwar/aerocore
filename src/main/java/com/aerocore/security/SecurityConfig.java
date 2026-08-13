@@ -46,10 +46,8 @@ public class SecurityConfig {
                         // publishes its timetable.
                         .requestMatchers(HttpMethod.GET, "/api/flights", "/api/flights/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
-                        .requestMatchers("/", "/index.html", "/app.js", "/styles.css", "/favicon.ico").permitAll()
-                        .requestMatchers("/actuator/health/**", "/swagger-ui/**", "/swagger-ui.html",
-                                         "/v3/api-docs/**").permitAll()
-
+                        .requestMatchers("/", "/index.html", "/app.js", "/auth.js", "/styles.css", "/favicon.ico").permitAll()
+                        .requestMatchers("/actuator/health/**", "/swagger-ui/**", "/swagger-ui.html","/v3/api-docs/**").permitAll()
                         // Changing the schedule is another matter entirely.
                         .requestMatchers(HttpMethod.POST, "/api/flights").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/flights/**").hasRole("ADMIN")

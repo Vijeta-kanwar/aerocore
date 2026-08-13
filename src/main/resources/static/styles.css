@@ -567,3 +567,41 @@ footer a { color: var(--slate); }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---------- account bar ---------- */
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.who {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(255,255,255,0.72);
+}
+
+/* ---------- sign-in prompt ---------- */
+
+/* Shown in place of the bookings list when nobody is signed in. Deliberately not a
+   redirect: the flight schedule is public and losing it on the way to a login screen
+   would be a worse experience than being asked at the point it matters. */
+.prompt {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--slate);
+}
+
+.prompt strong {
+  display: block;
+  color: var(--ink);
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+.prompt .btn {
+  margin-top: 14px;
+}

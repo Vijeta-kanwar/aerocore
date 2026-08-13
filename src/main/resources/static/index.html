@@ -18,6 +18,11 @@
       <button class="tab" id="tab-search"   role="tab" aria-selected="true"  aria-controls="panel-search">Find flights</button>
       <button class="tab" id="tab-bookings" role="tab" aria-selected="false" aria-controls="panel-bookings">My bookings</button>
     </nav>
+    <div class="account" id="account">
+      <span class="who" id="account-email"></span>
+      <button class="tab" id="sign-out">Sign out</button>
+      <button class="tab" id="sign-in">Sign in</button>
+    </div>
   </div>
 </header>
 
@@ -51,11 +56,7 @@
 
   <div id="panel-bookings" role="tabpanel" aria-labelledby="tab-bookings" class="hidden">
     <div class="results-head">
-      <h2>Look up a booking</h2>
-    </div>
-    <div class="lookup">
-      <input id="lookup-email" type="email" placeholder="The email you booked with" autocomplete="email">
-      <button class="btn" id="lookup-btn">Find bookings</button>
+      <h2>Your bookings</h2>
     </div>
     <div id="bookings"></div>
   </div>
@@ -68,6 +69,7 @@
   <a href="/actuator/health">Health</a>
 </footer>
 
+<!-- Booking form. Only ever opened when signed in. -->
 <dialog id="book-dialog">
   <form id="book-form" method="dialog">
     <div class="dialog-head">
@@ -102,6 +104,36 @@
   </form>
 </dialog>
 
+<!-- Sign in / register. One dialog, two modes, because the fields barely differ. -->
+<dialog id="auth-dialog">
+  <form id="auth-form" method="dialog">
+    <div class="dialog-head">
+      <h3 id="auth-title">Sign in</h3>
+      <p id="auth-sub">Bookings are tied to your account.</p>
+    </div>
+    <div class="dialog-body">
+      <div class="form-error hidden" id="auth-error"></div>
+
+      <div id="name-field" class="hidden">
+        <label for="a-name">Full name</label>
+        <input id="a-name" minlength="2" maxlength="120" autocomplete="name">
+      </div>
+
+      <label for="a-email">Email</label>
+      <input id="a-email" type="email" required autocomplete="email">
+
+      <label for="a-password">Password</label>
+      <input id="a-password" type="password" required minlength="10" autocomplete="current-password">
+
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="auth-switch">Create an account</button>
+        <button type="submit" class="btn" id="auth-submit">Sign in</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<script src="/auth.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
