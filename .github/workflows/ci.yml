@@ -75,13 +75,43 @@ jobs:
           echo "flights returned: $count"
           test "$count" -ge 1
 
+      # Authentication must actually be enforced.
+      - name: Unauthenticated booking is rejected with 401
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/api/bookings \
+            -H 'Content-Type: application/json' \
+            -d '{"flightId":1,"passengerName":"CI Smoke","passengerEmail":"ci@example.com","passengerPhone":"9999999999","seatsBooked":2}')
+          echo "got $status"
+          test "$status" = "401"
+
+      - name: Register smoke test user
+        run: |
+          curl -fsS -X POST http://localhost:8080/api/auth/register \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"smoke@aerocore.test","password":"smoke-test-password","fullName":"Smoke Test"}'
+
+      - name: Login smoke test user
+        run: |
+          TOKEN=$(curl -fsS -X POST http://localhost:8080/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"smoke@aerocore.test","password":"smoke-test-password"}' \
+            | jq -r '.token')
+
+          test -n "$TOKEN"
+          test "$TOKEN" != "null"
+          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
       - name: Booking reserves a seat and the count goes down
         run: |
           before=$(curl -fsS http://localhost:8080/api/flights/1 | jq '.availableSeats')
+
           curl -fsS -X POST http://localhost:8080/api/bookings \
             -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Idempotency-Key: $(uuidgen)" \
             -d '{"flightId":1,"passengerName":"CI Smoke","passengerEmail":"ci@example.com","passengerPhone":"9999999999","seatsBooked":2}' \
             | jq -e '.reference and .status == "CONFIRMED"'
+
           after=$(curl -fsS http://localhost:8080/api/flights/1 | jq '.availableSeats')
           echo "seats: $before -> $after"
           test "$after" -eq "$((before - 2))"
@@ -90,6 +120,8 @@ jobs:
         run: |
           status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/api/bookings \
             -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Idempotency-Key: $(uuidgen)" \
             -d '{"flightId":1,"passengerName":"CI Smoke","passengerEmail":"ci@example.com","passengerPhone":"9999999999","seatsBooked":9999}')
           echo "got $status"
           test "$status" = "400" -o "$status" = "409"
@@ -98,6 +130,8 @@ jobs:
         run: |
           status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/api/bookings \
             -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Idempotency-Key: $(uuidgen)" \
             -d '{"flightId":1,"passengerName":"CI Smoke","passengerEmail":"nope","passengerPhone":"9999999999","seatsBooked":1}')
           test "$status" = "400"
 
