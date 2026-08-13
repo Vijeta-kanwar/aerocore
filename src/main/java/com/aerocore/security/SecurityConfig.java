@@ -1,5 +1,6 @@
 package com.aerocore.security;
 
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -29,6 +30,11 @@ public class SecurityConfig {
                 // token has to be attached deliberately by our own JavaScript, so there is
                 // nothing to ride. Disabled because it doesn't apply, not because it's noisy.
                 .csrf(csrf -> csrf.disable())
+                .exceptionHandling(handling -> handling
+                     .authenticationEntryPoint((request, response, ex) ->
+                              response.sendError(
+                                  HttpServletResponse.SC_UNAUTHORIZED,
+                                 "Authentication required")))
 
                 // Nothing to keep between requests. This is the setting that makes three
                 // replicas interchangeable.
