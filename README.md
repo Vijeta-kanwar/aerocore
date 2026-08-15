@@ -1,270 +1,81 @@
-# AirTicket — flight search and seat booking
+Readme · MD
+AeroCore
 
-[![CI](https://github.com/Vijeta-kanwar/air_ticket_system/actions/workflows/ci.yml/badge.svg)](https://github.com/Vijeta-kanwar/air_ticket_system/actions/workflows/ci.yml)
+A flight-booking backend built around four things that are easy to get subtly wrong: a seat must not be oversold when two bookings arrive together, one checkout request must not become two charges, a payment whose outcome is never reported must not strand a seat or take money for a booking that no longer exists, and an operation on a booking must belong to the person making it.
 
-![AirTicket booking interface](pic.png)
+The CRUD around flights and bookings is the uninteresting part. What the project is actually about is transaction boundaries, conditional writes, idempotency, and a state machine that holds when things fail halfway.
 
-A Spring Boot service for searching flights and reserving seats, backed by PostgreSQL,
-containerised, and deployed to Kubernetes with a CI pipeline that tests, builds and
-publishes the image on every push to `main`.
+Java 17 · Spring Boot 3.3 · PostgreSQL 16 · Flyway · Docker · Kubernetes · GitHub Actions
 
-The interesting part isn't the CRUD. It's that reserving a seat is a read-then-write on
-a shared counter, and the app runs three replicas — so the booking path is written to be
-correct under concurrency rather than merely to work when one person clicks at a time.
+The four invariants
 
----
+A seat is never oversold. Reservation is a conditional update — UPDATE flights SET available_seats = available_seats - :n WHERE id = :id AND available_seats >= :n — and the affected-row count is the answer. The database decides whether enough seats remained at the moment of the write; nothing is read into Java and then acted upon, so there is no window for another booking to change the count underneath.
 
-## Run it
+One request is one booking. Clients send an Idempotency-Key. The key row and the booking commit in the same transaction, so a crash rolls back both and a retry books cleanly. A replay returns the original response verbatim; a key reused with a different body is a 422, not a silent replay.
 
-One command, nothing to install beyond Docker:
+A booking only moves along legal edges. Five states, four legal transitions, all declared in one table on BookingStatus. PAYMENT_PENDING → EXPIRED is deliberately not among them: nothing may quietly time out a booking that might already have been paid for.
 
-```bash
+Nothing is claimed that isn't checked. Ownership is enforced in the service layer, the CI smoke test exercises the real stack against real Postgres, and what is not yet proven is listed under Known limits rather than left for someone to discover.
+
+How a booking works
+
+Three phases, with the transaction boundaries falling between them:
+
+Reserve — one transaction: create the booking as PENDING, reserve the seats, record the idempotency key. Commit.
+Pay — no transaction is open. The gateway is called with the booking reference as its idempotency key. This takes seconds; nothing is locked and no connection is held.
+Settle — one transaction: confirm the booking, or release the seats. Commit.
+
+The seat is protected during phase 2 by a row that says PENDING, not by a lock. A lock protects for milliseconds; a state protects for minutes, survives a restart, and occupies no connection.
+
+Just before the gateway is called the booking moves to PAYMENT_PENDING, which exists for one reason: the hold sweeper reclaims abandoned PENDING holds, and once money may have moved, "this hold looks abandoned" stops being a safe conclusion. The sweeper never selects PAYMENT_PENDING. A separate reconciler resolves those by asking the gateway what actually happened.
+
+Decisions
+
+Recorded in docs/adr — one file per decision, each with the context that forced it and what it cost:
+
+0001 — reserving seats with a conditional update instead of a row lock, and why cancel() still uses one
+0002 — why the key and the booking share a transaction
+0003 — why the gateway call sits outside every transaction
+0004 — stateless JWTs across three replicas, and what localStorage costs
+Bugs worth reading about
+
+The detached idempotency record. reserveSeats is annotated @Modifying(clearAutomatically = true) so a stale seat count can't be read after a bulk update. That clears the entire persistence context, not just the Flight — including the IdempotencyRecord inserted moments earlier in the same transaction. By the time record.complete() ran, the record was detached, dirty checking never saw the change, and no UPDATE was issued. Every replay returned "still in progress", forever. Two individually correct decisions, made a day apart, that broke each other.
+
+Lazy loading, when one transaction became three. Mapping a Booking to its DTO reads flight.getFlightNumber(), and the association is LAZY. That was safe while checkout was a single transaction, because the mapping happened inside it. Splitting checkout around the gateway call moved the mapping outside any session, and the proxy had nothing to load from. Entities belong inside transactions; DTOs travel outside them.
+
+A CHECK constraint that was right for one transition and wrong for the next. payment_charge_id was constrained to rows with status CONFIRMED. True at the moment of payment, false the moment a paid booking was cancelled — the constraint fired and every cancellation of a paid booking became a 500. The charge id records that money moved, and cancelling doesn't unmake that; it is exactly what a refund needs. A CHECK has to hold for every state a row will ever be in.
+
+403 where 401 belonged. The CI smoke test asserted that an unauthenticated booking is rejected with 401 and got 403 instead — Spring Security's stateless default, which tells a client "you're not allowed" when the truth is "I don't know who you are". No unit test could have caught it, because @WithMockUser never exercises the anonymous path. The frontend depends on the distinction: 401 clears the session and shows sign-in, 403 doesn't.
+
+Known limits
+No token revocation. Signing out stops sending the token; it doesn't invalidate it. A stolen token works until it expires. The fix is refresh tokens, which need server-side state that access tokens deliberately avoid.
+Idempotency keys are never pruned. The table grows without bound. A retry arriving a week later is a new intent, not a duplicate, so keys should expire.
+No automated concurrency proof. The design is safe and the unit tests prove the right query is issued, but nothing yet fires twenty threads at the last seat and asserts one success. Knowing the difference between designed-safe and tested-safe is the point of saying so here.
+The payment gateway is a stub. Deliberately: what needed testing was latency, declines and outcomes that never arrive, and a real provider hands those out on its own schedule. A real one must accept an idempotency key and answer questions about past charges.
+A payment with an unknown outcome holds its seat until the reconciler runs — and indefinitely if the gateway stays unreachable. That is the chosen direction to fail in: a booking stuck for an hour beats a seat sold twice.
+One Postgres instance. A stated single point of failure. Production would want an operator like CloudNativePG for replication and failover.
+Demo secrets are committed so a clean clone runs. Kubernetes Secrets are base64, not encryption; production would use Sealed Secrets or an external secrets operator.
+Running it
+bash
 docker compose up --build
-```
 
-Then open **http://localhost:8080**.
+Then open http://localhost:8080, register an account, and book a flight. Payment happens server-side inside checkout — there is no separate payment step.
 
-| What | Where |
-| --- | --- |
-| Booking UI | http://localhost:8080 |
-| API reference (Swagger) | http://localhost:8080/swagger-ui.html |
-| Health | http://localhost:8080/actuator/health |
+To see the concurrency behaviour rather than the happy path:
 
-The database is seeded with ten flights on real Indian routes, so there is something to
-search the moment it starts.
+bash
+# drain a flight to one seat, then ask for two
+docker compose exec db psql -U aerocore -d aerocore \
+  -c "UPDATE flights SET available_seats = 1 WHERE id = 1;"
 
-To stop and wipe the database volume: `docker compose down -v`
+Booking two seats now returns 409 with the true remaining count. Booking one succeeds; the same request replayed with the same Idempotency-Key returns the identical response and does not reserve a second seat.
 
----
+The API reference is at /swagger-ui.html on the running application.
 
-## Architecture
-
-```
-                        ┌──────────────────────────────┐
-   push to main ───────▶│  GitHub Actions              │
-                        │  test → smoke → publish      │
-                        └───────────────┬──────────────┘
-                                        │ image
-                                        ▼
-                              ghcr.io/…/air_ticket_system
-                                        │
-                                        │ kubectl apply -k k8s/
-                                        ▼
-   ┌────────────────────────────────────────────────────────────┐
-   │  namespace: aerocore                                      │
-   │                                                            │
-   │   Service (NodePort 30080)                                 │
-   │        │                                                   │
-   │        ├──▶ Pod ─┐                                         │
-   │        ├──▶ Pod ─┼──▶ Service ──▶ StatefulSet: postgres:16 │
-   │        └──▶ Pod ─┘   aerocore-db      └── PVC (1Gi)       │
-   │             ▲                                              │
-   │             └── HPA: 2–6 replicas @ 70% CPU                │
-   └────────────────────────────────────────────────────────────┘
-```
-
-Three app pods share one database. That is the whole reason the storage layer is a
-StatefulSet with a volume rather than an in-memory database — see the note on state below.
-
----
-
-## Stack
-
-| Layer | Choice |
-| --- | --- |
-| Language / framework | Java 17, Spring Boot 3.2 |
-| Persistence | PostgreSQL 16, Spring Data JPA |
-| Schema management | Flyway (versioned migrations) |
-| API docs | springdoc-openapi |
-| Build | Maven |
-| Container | Docker, multi-stage, layered JAR, non-root |
-| Local environment | Docker Compose |
-| Orchestration | Kubernetes + Kustomize |
-| CI/CD | GitHub Actions → GitHub Container Registry |
-| Tests | JUnit 5, Mockito, MockMvc, JaCoCo |
-
----
-
-## Engineering notes
-
-Things in here that were deliberate, and why.
-
-**Seat reservation takes a row lock.** Booking reads `available_seats`, compares it to the
-request, then writes the decremented value. Two pods running that at the same moment can
-both read "2 seats left" and both succeed, overselling the flight. The read goes through
-`findByIdForUpdate`, a `SELECT … FOR UPDATE`, inside a single transaction, so a concurrent
-booking on the same flight blocks until the first commits. A `CHECK` constraint in the
-schema backs this up at the database level in case application code ever regresses.
-
-**The schema is versioned, not generated.** `spring.jpa.hibernate.ddl-auto=validate`, and
-every table comes from a numbered file in `src/main/resources/db/migration`. Hibernate
-verifies the entities match at boot and refuses to start if they've drifted. `ddl-auto=update`
-would silently alter production tables on deploy and cannot express a `CHECK` constraint,
-a partial index, or a backfill.
-
-**Money is `BigDecimal` and `NUMERIC(10,2)`.** `double` cannot represent 5499.10 exactly;
-multiply it by a seat count a few thousand times and the ledger drifts.
-
-**Liveness and readiness are separate probes.** A pod that has lost its database connection
-is not *ready* for traffic, but restarting it fixes nothing — so readiness reports the
-database and liveness doesn't. A `startupProbe` absorbs slow JVM boot so liveness can stay
-aggressive afterwards without killing pods that are merely still starting.
-
-**Errors carry a status code and a shape.** A `@RestControllerAdvice` maps a missing flight
-to 404, a full flight to 409, and a malformed payload to 400 with the offending field named.
-Nothing reaches the client as a 500 with a stack trace.
-
-**The image is layered.** The JAR is split by change frequency, so editing a controller
-pushes a few hundred kilobytes rather than the whole ~60 MB image.
-
-**The frontend uses relative paths.** `/api/flights`, never `http://localhost:8080/api/flights`,
-so the same build works on Compose, on a NodePort, and behind an ingress.
-
-### Known limits
-
-Being explicit about what this doesn't do:
-
-- **No authentication.** Anyone can cancel any booking if they know its id. Adding Spring
-  Security with per-passenger authorisation is the obvious next step.
-- **One database replica.** The StatefulSet is a single Postgres pod with no replication,
-  so the database is a single point of failure. Real high availability needs an operator
-  such as CloudNativePG.
-- **Demo credentials are committed** in `k8s/postgres/secret.yaml` so the project runs from
-  a clean clone. A real cluster would use Sealed Secrets or External Secrets Operator.
-- **Seats are counted, not assigned.** There is no seat map; a booking reserves *n* seats
-  rather than 12A and 12B.
-
----
-
-## API
-
-Full interactive reference at `/swagger-ui.html`. The common calls:
-
-```bash
-# Search a route
-curl "http://localhost:8080/api/flights/search?origin=Delhi&destination=Mumbai"
-
-# Reserve two seats
-curl -X POST http://localhost:8080/api/bookings \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "flightId": 1,
-    "passengerName": "Vijeta Kanwar",
-    "passengerEmail": "vijeta@example.com",
-    "passengerPhone": "9876543210",
-    "seatsBooked": 2
-  }'
-
-# Find your bookings
-curl "http://localhost:8080/api/bookings/passenger?email=vijeta@example.com"
-
-# Cancel one (returns the seats to the flight)
-curl -X POST http://localhost:8080/api/bookings/1/cancel
-```
-
-| Method | Endpoint | Returns |
-| --- | --- | --- |
-| GET | `/api/flights` | 200 — the whole schedule |
-| GET | `/api/flights/search?origin=&destination=` | 200, 400 if a parameter is missing |
-| GET | `/api/flights/{id}` | 200, 404 |
-| POST | `/api/flights` | 201 + `Location`, 400, 409 on duplicate flight number |
-| PUT | `/api/flights/{id}` | 200, 400, 404, 409 |
-| DELETE | `/api/flights/{id}` | 204, 404 |
-| GET | `/api/bookings` | 200 |
-| GET | `/api/bookings/{id}` | 200, 404 |
-| GET | `/api/bookings/reference/{ref}` | 200, 404 |
-| GET | `/api/bookings/passenger?email=` | 200, 400 |
-| POST | `/api/bookings` | 201 + `Location`, 400, 404, **409 when the flight is full** |
-| POST | `/api/bookings/{id}/cancel` | 200, 404, 409 if already cancelled |
-| DELETE | `/api/bookings/{id}` | 204, 404 |
-
-Every error response has the same shape:
-
-```json
-{
-  "timestamp": "2026-08-01T09:14:22Z",
-  "status": 409,
-  "error": "Conflict",
-  "message": "Requested 5 seat(s) but only 2 remain on this flight",
-  "path": "/api/bookings"
-}
-```
-
----
-
-## Deploying to Kubernetes
-
-Tested on minikube.
-
-```bash
-minikube start
-minikube addons enable metrics-server     # the HPA needs this
-
-kubectl apply -k k8s/
-
-kubectl -n aerocore rollout status deployment/aerocore-app
-minikube service aerocore-app -n aerocore --url
-```
-
-To run your own image instead of the published one:
-
-```bash
-cd k8s && kustomize edit set image ghcr.io/vijeta-kanwar/aerocore=my-image:tag
-```
-
----
-
-## Tests
-
-```bash
-mvn verify          # unit + slice tests, then a JaCoCo report in target/site/jacoco
-```
-
-Three layers, each testing something the others can't:
-
-- **Service tests** (Mockito, no Spring context) — overbooking is rejected, seat counts move
-  by the right amount, cancelling twice doesn't credit seats twice, the flight row is locked
-  rather than plainly read.
-- **Controller tests** (`@WebMvcTest` + MockMvc) — validation rejects bad emails and zero-seat
-  requests with 400 and a named field; a full flight returns 409, not 500.
-- **Smoke test** (CI, `docker compose`) — the image builds, Flyway migrates a real Postgres,
-  a booking actually decrements the seat count. This is the layer that catches what mocks
-  can't: a broken Dockerfile, a bad migration, a misconfigured connection string.
-
----
-
-## Repository layout
-
-```
-.github/workflows/ci.yml     test → smoke → publish to GHCR
-src/main/java/com/aerocore/
-  controller/                REST endpoints, DTOs in and out
-  dto/                       request/response records, bean validation
-  exception/                 typed exceptions + @RestControllerAdvice
-  model/                     JPA entities
-  repository/                Spring Data interfaces, incl. the locking query
-  service/                   transactional business logic
-src/main/resources/
-  db/migration/              Flyway V1 schema, V2 seed data
-  static/index.html          the booking UI
-  application*.properties    default / local / kubernetes profiles
-src/test/java/               unit and slice tests
-k8s/                         Kustomize: namespace, postgres, app
-Dockerfile                   multi-stage, layered, non-root
-docker-compose.yml           app + postgres for local work
-```
-
----
-
-## Author
-
-**Vijeta Kanwar** — [github.com/Vijeta-kanwar](https://github.com/Vijeta-kanwar)
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
-
-eyJhbGciOiJIUzM4NCJ9.eyJzdWIiOiIyIiwicm9sZSI6IlVTRVIiLCJpYXQiOjE3ODY1MzgwNDgsImV4cCI6MTc4NjUzOTg0OH0.OtNOSQBWbpmq8SO2K1O0j2XBB1AqMfRhf4tgYMmt_4oUuPrgorjRS9_y9OBVVu5x
-
-eyJhbGciOiJIUzM4NCJ9.eyJzdWIiOiIzIiwicm9sZSI6IlVTRVIiLCJpYXQiOjE3ODY1ODk4MDgsImV4cCI6MTc4NjU5MTYwOH0.oAsffW8-Qyptv5b7GeUbebiobwnbrqw1b6aZATlTPidlxsdTfLSas9JLdBKd0jS0
+Where to look
+docs/adr — the reasoning behind the four decisions above
+BookingCheckoutService — the three phases and where the transactions start and stop
+FlightRepository.reserveSeats — the conditional update, and why @Modifying carries the flags it does
+BookingStatus — the transition table, including the edge that is deliberately absent
+HoldExpirySweeper / PaymentReconciler — background work across three replicas, with SKIP LOCKED and no coordination
+.github/workflows/ci.yml — what is actually proven end to end
