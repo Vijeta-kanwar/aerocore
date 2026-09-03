@@ -52,12 +52,31 @@ public class IdempotencyRecord {
         this.createdAt = Instant.now();
     }
 
-    public void complete(Long bookingId, String responseBody) {
-        this.status = IdempotencyStatus.COMPLETED;
-        this.bookingId = bookingId;
-        this.responseBody = responseBody;
-        this.completedAt = Instant.now();
+   public void attachBooking(Long bookingId) {
+    this.bookingId = bookingId;
     }
+
+    public void complete(Long bookingId, String responseBody) {
+    this.status = IdempotencyStatus.COMPLETED;
+    this.bookingId = bookingId;
+    this.responseBody = responseBody;
+    this.completedAt = Instant.now();
+    }
+
+public void fail(Long bookingId, String responseBody) {
+    this.status = IdempotencyStatus.FAILED;
+    this.bookingId = bookingId;
+    this.responseBody = responseBody;
+    this.completedAt = Instant.now();
+}
+
+public boolean isCompleted() {
+    return status == IdempotencyStatus.COMPLETED;
+}
+
+public boolean isFailed() {
+    return status == IdempotencyStatus.FAILED;
+}
 
     /**
      * Whether this key is being replayed with the request that created it.
@@ -70,9 +89,6 @@ public class IdempotencyRecord {
         return requestHash.equals(candidateHash);
     }
 
-    public boolean isCompleted() {
-        return status == IdempotencyStatus.COMPLETED;
-    }
 
     public String getIdempotencyKey() {
         return idempotencyKey;

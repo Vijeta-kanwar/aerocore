@@ -7,6 +7,7 @@ import com.aerocore.repository.IdempotencyRecordRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+
 /**
  * The transactional bookends of an idempotent checkout.
  *
@@ -43,11 +44,21 @@ public class IdempotencyService {
      * <p>saveAndFlush pushes the INSERT now, so a duplicate key fails here rather than at
      * commit, before we've done the work of reserving a seat.
      */
+
     @Transactional
-    public Booking beginCheckout(String key, String requestHash, BookingRequest request) {
-        recordRepository.saveAndFlush(new IdempotencyRecord(key, requestHash));
-        return bookingService.createHold(request);
-    }
+public Booking beginCheckout(String key, String requestHash, BookingRequest request) {
+    IdempotencyRecord record =
+            new IdempotencyRecord(key, requestHash);
+
+    recordRepository.saveAndFlush(record);
+
+    Booking booking = bookingService.createHold(request);
+
+    record.attachBooking(booking.getId());
+    recordRepository.save(record);
+
+    return booking;
+}
 
     @Transactional
     public Booking createHold(BookingRequest request) {
@@ -61,4 +72,36 @@ public class IdempotencyService {
         record.complete(bookingId, responseBody);
         recordRepository.save(record);
     }
+
+    @Transactional
+public void failCheckout(String key, Long bookingId, String responseBody) {
+    IdempotencyRecord record = recordRepository.findByIdempotencyKey(key)
+            .orElseThrow(() ->
+                    new IllegalStateException("Idempotency record vanished for key " + key));
+
+    record.fail(bookingId, responseBody);
+    recordRepository.save(record);
+}
+
+@Transactional
+public void completeCheckoutByBookingId(Long bookingId, String responseBody) {
+    IdempotencyRecord record = recordRepository.findByBookingId(bookingId)
+            .orElseThrow(() ->
+                    new IllegalStateException(
+                            "No idempotency record found for booking " + bookingId));
+
+    record.complete(bookingId, responseBody);
+    recordRepository.save(record);
+}
+
+@Transactional
+public void failCheckoutByBookingId(Long bookingId, String responseBody) {
+    IdempotencyRecord record = recordRepository.findByBookingId(bookingId)
+            .orElseThrow(() ->
+                    new IllegalStateException(
+                            "No idempotency record found for booking " + bookingId));
+
+    record.fail(bookingId, responseBody);
+    recordRepository.save(record);
+}
 }

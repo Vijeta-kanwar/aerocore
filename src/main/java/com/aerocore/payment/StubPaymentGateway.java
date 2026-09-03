@@ -35,7 +35,7 @@ public class StubPaymentGateway implements PaymentGateway {
     private final double timeoutRate;
 
     public StubPaymentGateway(@Value("${aerocore.payments.latency-ms:1200}") long latencyMs,
-                              @Value("${aerocore.payments.decline-rate:0.0}") double declineRate,
+                              @Value("${aerocore.payments.decline-rate:1.0}") double declineRate,
                               @Value("${aerocore.payments.timeout-rate:0.0}") double timeoutRate) {
         this.latencyMs = latencyMs;
         this.declineRate = declineRate;

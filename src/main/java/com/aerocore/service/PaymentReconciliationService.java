@@ -6,6 +6,11 @@ import com.aerocore.model.Flight;
 import com.aerocore.payment.PaymentGateway.PaymentResult;
 import com.aerocore.repository.BookingRepository;
 import com.aerocore.repository.FlightRepository;
+import com.aerocore.dto.BookingResponse;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.aerocore.dto.PaymentFailureResponse;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -27,12 +32,19 @@ public class PaymentReconciliationService {
 
     private final BookingRepository bookingRepository;
     private final FlightRepository flightRepository;
+    private final IdempotencyService idempotencyService;
+    private final ObjectMapper objectMapper;
 
-    public PaymentReconciliationService(BookingRepository bookingRepository,
-                                        FlightRepository flightRepository) {
-        this.bookingRepository = bookingRepository;
-        this.flightRepository = flightRepository;
-    }
+public PaymentReconciliationService(BookingRepository bookingRepository,
+                                    FlightRepository flightRepository,
+                                    IdempotencyService idempotencyService,
+                                    ObjectMapper objectMapper) {
+    this.bookingRepository = bookingRepository;
+    this.flightRepository = flightRepository;
+    this.idempotencyService = idempotencyService;
+    this.objectMapper = objectMapper;
+}
+
 
     /**
      * Applies what the gateway told us, if the booking is still waiting to hear it.
@@ -61,16 +73,61 @@ public class PaymentReconciliationService {
 
         return switch (result.outcome()) {
             case SUCCEEDED -> {
-                booking.confirm(result.chargeId());
-                log.info("Reconciled {}: the charge had succeeded after all", booking.getReference());
-                yield true;
-            }
+    booking.confirm(result.chargeId());
+
+    try {
+        String responseBody = objectMapper.writeValueAsString(
+                BookingResponse.from(booking)
+        );
+
+        idempotencyService.completeCheckoutByBookingId(
+                booking.getId(),
+                responseBody
+        );
+    } catch (JsonProcessingException e) {
+        throw new IllegalStateException(
+                "Could not serialize reconciled booking "
+                        + booking.getReference(), e);
+    }
+
+    log.info(
+            "Reconciled {}: the charge had succeeded after all",
+            booking.getReference()
+    );
+
+    yield true;
+}
             case DECLINED, NOT_FOUND -> {
-                releaseSeats(booking);
-                booking.cancel();
-                log.info("Reconciled {}: no charge exists, seats returned", booking.getReference());
-                yield true;
-            }
+    releaseSeats(booking);
+    booking.cancel();
+
+    try {
+        String responseBody = objectMapper.writeValueAsString(
+                new PaymentFailureResponse(
+                        booking.getReference(),
+                        result.message()
+                )
+        );
+
+        idempotencyService.failCheckoutByBookingId(
+                booking.getId(),
+                responseBody
+        );
+    } catch (JsonProcessingException e) {
+        throw new IllegalStateException(
+                "Could not store the reconciled payment failure for "
+                        + booking.getReference(),
+                e
+        );
+    }
+
+    log.info(
+            "Reconciled {}: no charge exists, seats returned",
+            booking.getReference()
+    );
+
+    yield true;
+}
             // Still nobody's idea what happened. Leave it exactly as it is and ask again next
             // run -- a booking we can't resolve is worth far less than a seat we resell twice.
             case UNKNOWN -> {

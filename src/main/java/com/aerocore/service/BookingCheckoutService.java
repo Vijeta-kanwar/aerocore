@@ -2,7 +2,9 @@ package com.aerocore.service;
 
 import com.aerocore.dto.BookingRequest;
 import com.aerocore.dto.BookingResponse;
+import com.aerocore.dto.PaymentFailureResponse;
 import com.aerocore.exception.IdempotencyKeyReusedException;
+import com.aerocore.exception.PaymentDeclinedException;
 import com.aerocore.exception.PaymentFailedException;
 import com.aerocore.exception.RequestInProgressException;
 import com.aerocore.model.Booking;
@@ -43,7 +45,8 @@ import java.util.Optional;
 @Service
 public class BookingCheckoutService {
 
-    private static final Logger log = LoggerFactory.getLogger(BookingCheckoutService.class);
+    private static final Logger log =
+            LoggerFactory.getLogger(BookingCheckoutService.class);
 
     private final IdempotencyService idempotencyService;
     private final BookingPaymentService paymentService;
@@ -63,76 +66,200 @@ public class BookingCheckoutService {
         this.objectMapper = objectMapper;
     }
 
-    public BookingResponse checkout(String idempotencyKey, BookingRequest request) {
+    public BookingResponse checkout(String idempotencyKey,
+                                    BookingRequest request) {
+
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             // No key, no protection. The endpoint stays usable for clients that don't send one,
             // and the README is honest that those clients can double-book themselves.
-            return runCheckout(idempotencyService.createHold(request));
+            return runCheckout(
+                    idempotencyService.createHold(request)
+            );
         }
 
         String hash = hash(request);
 
-        Optional<IdempotencyRecord> existing = recordRepository.findByIdempotencyKey(idempotencyKey);
+        Optional<IdempotencyRecord> existing =
+                recordRepository.findByIdempotencyKey(idempotencyKey);
+
         if (existing.isPresent()) {
-            return replay(existing.get(), hash, idempotencyKey);
+            return replay(
+                    existing.get(),
+                    hash,
+                    idempotencyKey
+            );
         }
 
         Booking hold;
+
         try {
             // One transaction: the key row and the seat reservation commit together, so a crash
             // rolls back both and a retry books cleanly.
-            hold = idempotencyService.beginCheckout(idempotencyKey, hash, request);
+            hold = idempotencyService.beginCheckout(
+                    idempotencyKey,
+                    hash,
+                    request
+            );
+
         } catch (DataIntegrityViolationException duplicate) {
+
             // Lost a race neither request could see: both checked above, neither had committed.
             // The unique index picked a winner and handed us this.
-            IdempotencyRecord winner = recordRepository.findByIdempotencyKey(idempotencyKey)
-                    .orElseThrow(() -> duplicate);
-            return replay(winner, hash, idempotencyKey);
+            IdempotencyRecord winner =
+                    recordRepository
+                            .findByIdempotencyKey(idempotencyKey)
+                            .orElseThrow(() -> duplicate);
+
+            return replay(
+                    winner,
+                    hash,
+                    idempotencyKey
+            );
         }
 
-        BookingResponse response = runCheckout(hold);
-        idempotencyService.completeCheckout(idempotencyKey, hold.getId(), serialize(response));
-        return response;
+        try {
+            BookingResponse response = runCheckout(hold);
+
+            idempotencyService.completeCheckout(
+                    idempotencyKey,
+                    hold.getId(),
+                    serialize(response)
+            );
+
+            return response;
+
+        } catch (PaymentDeclinedException declined) {
+
+            // A definite decline is terminal. The seats have already been released,
+            // so persist the exact failure for future retries with this key.
+            idempotencyService.failCheckout(
+                    idempotencyKey,
+                    hold.getId(),
+                    serializeFailure(declined)
+            );
+
+            throw declined;
+        }
     }
 
     /**
      * The three phases, with the transaction boundaries falling between them.
      */
     private BookingResponse runCheckout(Booking hold) {
+
         // Committed before the gateway is touched, so the sweeper can no longer reach this row.
         paymentService.beginPayment(hold.getId());
 
         // No transaction is open across this call. Nothing is locked, no connection is held.
-        PaymentResult result = paymentGateway.charge(hold.getReference(), hold.getTotalAmount());
+        PaymentResult result =
+                paymentGateway.charge(
+                        hold.getReference(),
+                        hold.getTotalAmount()
+                );
 
         if (result.isSucceeded()) {
-    return paymentService.confirmPaid(hold.getId(), result.chargeId());
-}
+            return paymentService.confirmPaid(
+                    hold.getId(),
+                    result.chargeId()
+            );
+        }
 
         if (result.isUnknown()) {
+
             // The seats stay held. We do not know whether money moved, and releasing a seat that
             // was paid for is worse than holding one that wasn't. The reconciler resolves this
             // later by asking the gateway what actually happened.
-            log.warn("Payment outcome unknown for {}; leaving it for reconciliation", hold.getReference());
-            throw new PaymentFailedException(hold.getReference(),
-                    "We could not confirm your payment. Check your bookings shortly before trying again.");
+            log.warn(
+                    "Payment outcome unknown for {}; leaving it for reconciliation",
+                    hold.getReference()
+            );
+
+            throw new PaymentFailedException(
+                    hold.getReference(),
+                    "We could not confirm your payment. Check your bookings shortly before trying again."
+            );
         }
 
         // A definite decline is the only case where releasing the seats is safe.
         paymentService.releaseAfterFailedPayment(hold.getId());
-        throw new PaymentFailedException(hold.getReference(), result.message());
+
+        throw new PaymentDeclinedException(
+                hold.getReference(),
+                result.message()
+        );
     }
 
-    private BookingResponse replay(IdempotencyRecord record, String hash, String key) {
+    private BookingResponse replay(IdempotencyRecord record,
+                                   String hash,
+                                   String key) {
+
+        // Same key with a different request body is always rejected.
         if (!record.matches(hash)) {
             throw new IdempotencyKeyReusedException(key);
         }
+
+        // A definite payment decline is terminal.
+        // Replay the exact failure instead of charging again.
+        if (record.isFailed()) {
+
+            PaymentFailureResponse failure =
+                    deserializeFailure(record.getResponseBody());
+
+            throw new PaymentDeclinedException(
+                    failure.reference(),
+                    failure.message()
+            );
+        }
+
+        // Unknown outcomes remain IN_PROGRESS until reconciliation resolves them.
         if (!record.isCompleted()) {
-            // Now genuinely reachable. Checkout spans three transactions with a gateway call
-            // between them, so a duplicate really can arrive while the first is mid-flight.
             throw new RequestInProgressException(key);
         }
+
+        // Successful checkout: replay the stored response verbatim.
         return deserialize(record.getResponseBody());
+    }
+
+    /**
+     * Serializes the terminal payment failure before storing it in the idempotency record.
+     */
+    private String serializeFailure(PaymentDeclinedException exception) {
+
+        try {
+            return objectMapper.writeValueAsString(
+                    new PaymentFailureResponse(
+                            exception.getReference(),
+                            exception.getMessage()
+                    )
+            );
+
+        } catch (JsonProcessingException e) {
+
+            throw new IllegalStateException(
+                    "Could not store the payment failure response",
+                    e
+            );
+        }
+    }
+
+    /**
+     * Deserializes a stored terminal payment failure.
+     */
+    private PaymentFailureResponse deserializeFailure(String json) {
+
+        try {
+            return objectMapper.readValue(
+                    json,
+                    PaymentFailureResponse.class
+            );
+
+        } catch (JsonProcessingException e) {
+
+            throw new IllegalStateException(
+                    "Stored payment failure could not be read",
+                    e
+            );
+        }
     }
 
     /**
@@ -143,28 +270,57 @@ public class BookingCheckoutService {
      * this service serialized itself -- it is not a signature over what arrived on the wire.
      */
     private String hash(BookingRequest request) {
+
         try {
-            byte[] json = objectMapper.writeValueAsBytes(request);
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(json);
-            return HexFormat.of().formatHex(digest);
+            byte[] json =
+                    objectMapper.writeValueAsBytes(request);
+
+            byte[] digest =
+                    MessageDigest
+                            .getInstance("SHA-256")
+                            .digest(json);
+
+            return HexFormat
+                    .of()
+                    .formatHex(digest);
+
         } catch (JsonProcessingException | NoSuchAlgorithmException e) {
-            throw new IllegalStateException("Could not hash the booking request", e);
+
+            throw new IllegalStateException(
+                    "Could not hash the booking request",
+                    e
+            );
         }
     }
 
     private String serialize(BookingResponse response) {
+
         try {
             return objectMapper.writeValueAsString(response);
+
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Could not store the booking response", e);
+
+            throw new IllegalStateException(
+                    "Could not store the booking response",
+                    e
+            );
         }
     }
 
     private BookingResponse deserialize(String json) {
+
         try {
-            return objectMapper.readValue(json, BookingResponse.class);
+            return objectMapper.readValue(
+                    json,
+                    BookingResponse.class
+            );
+
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Stored idempotent response could not be read", e);
+
+            throw new IllegalStateException(
+                    "Stored idempotent response could not be read",
+                    e
+            );
         }
     }
 }
