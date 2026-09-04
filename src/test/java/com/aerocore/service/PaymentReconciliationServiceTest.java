@@ -79,4 +79,197 @@ void succeededOutcomeConfirmsBookingAndCompletesIdempotency() {
                     anyString()
             );
 }
+
+@Test
+void declinedOutcomeCancelsBookingReleasesSeatsAndFailsIdempotency() {
+
+    // arrange
+    Flight flight = TestFixtures.flight(10L);
+
+    Booking booking = TestFixtures.booking(
+            100L,
+            flight,
+            2
+    );
+
+    booking.beginPayment();
+
+    when(bookingRepository.findBookingByIdForUpdate(100L))
+            .thenReturn(Optional.of(booking));
+
+    when(flightRepository.findByIdForUpdate(flight.getId()))
+            .thenReturn(Optional.of(flight));
+
+    PaymentResult result =
+            PaymentResult.declined("card declined");
+
+    // act
+    boolean resolved = service.applyOutcome(
+            100L,
+            result
+    );
+
+    // assert
+    assertTrue(resolved);
+    assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+
+    verify(flightRepository)
+            .findByIdForUpdate(flight.getId());
+
+    verify(idempotencyService)
+            .failCheckoutByBookingId(
+                    eq(100L),
+                    anyString()
+            );
+}
+@Test
+void notFoundOutcomeCancelsBookingReleasesSeatsAndFailsIdempotency() {
+
+    // arrange
+    Flight flight = TestFixtures.flight(10L);
+
+    Booking booking = TestFixtures.booking(
+            101L,
+            flight,
+            2
+    );
+
+    booking.beginPayment();
+
+    when(bookingRepository.findBookingByIdForUpdate(101L))
+            .thenReturn(Optional.of(booking));
+
+    when(flightRepository.findByIdForUpdate(flight.getId()))
+            .thenReturn(Optional.of(flight));
+
+    PaymentResult result =
+        PaymentResult.notFound();
+
+    // act
+    boolean resolved = service.applyOutcome(
+            101L,
+            result
+    );
+
+    // assert
+    assertTrue(resolved);
+    assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+
+    verify(flightRepository)
+            .findByIdForUpdate(flight.getId());
+
+    verify(idempotencyService)
+            .failCheckoutByBookingId(
+                    eq(101L),
+                    anyString()
+            );
+}
+@Test
+void unknownOutcomeLeavesBookingPendingAndDoesNotReleaseSeats() {
+
+    // arrange
+    Flight flight = TestFixtures.flight(10L);
+
+    Booking booking = TestFixtures.booking(
+            102L,
+            flight,
+            2
+    );
+
+    booking.beginPayment();
+
+    when(bookingRepository.findBookingByIdForUpdate(102L))
+            .thenReturn(Optional.of(booking));
+
+    PaymentResult result =
+            PaymentResult.unknown("gateway timeout");
+
+    // act
+    boolean resolved = service.applyOutcome(
+            102L,
+            result
+    );
+
+    // assert
+    assertFalse(resolved);
+    assertEquals(
+            BookingStatus.PAYMENT_PENDING,
+            booking.getStatus()
+    );
+
+    verify(flightRepository, never())
+            .findByIdForUpdate(anyLong());
+
+    verifyNoInteractions(idempotencyService);
+}
+
+@Test
+void alreadyResolvedBookingIsNoOp() {
+
+    // arrange
+    Flight flight = TestFixtures.flight(10L);
+
+    Booking booking = TestFixtures.booking(
+            103L,
+            flight,
+            2
+    );
+
+    booking.beginPayment();
+    booking.confirm("ch_existing");
+
+    when(bookingRepository.findBookingByIdForUpdate(103L))
+            .thenReturn(Optional.of(booking));
+
+    PaymentResult result =
+            PaymentResult.succeeded("ch_new");
+
+    // act
+    boolean resolved = service.applyOutcome(
+            103L,
+            result
+    );
+
+    // assert
+    assertFalse(resolved);
+
+    assertEquals(
+            BookingStatus.CONFIRMED,
+            booking.getStatus()
+    );
+
+    assertEquals(
+            "ch_existing",
+            booking.getPaymentChargeId()
+    );
+
+    verifyNoInteractions(flightRepository);
+    verifyNoInteractions(idempotencyService);
+}
+
+@Test
+void missingBookingIsNoOp() {
+
+    // arrange
+    when(bookingRepository.findBookingByIdForUpdate(999L))
+            .thenReturn(Optional.empty());
+
+    PaymentResult result =
+            PaymentResult.succeeded("ch_missing");
+
+    // act
+    boolean resolved = service.applyOutcome(
+            999L,
+            result
+    );
+
+    // assert
+    assertFalse(resolved);
+
+    verify(bookingRepository)
+            .findBookingByIdForUpdate(999L);
+
+    verifyNoInteractions(flightRepository);
+    verifyNoInteractions(idempotencyService);
+}
 }

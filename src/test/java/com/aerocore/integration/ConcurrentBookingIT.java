@@ -23,6 +23,13 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.aerocore.model.BookingStatus;
+import com.aerocore.model.Booking;
+import com.aerocore.model.IdempotencyRecord;
+import com.aerocore.payment.PaymentGateway.PaymentResult;
+import com.aerocore.repository.IdempotencyRecordRepository;
+import com.aerocore.service.PaymentReconciliationService;
+
 import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.util.List;
@@ -71,15 +78,20 @@ class ConcurrentBookingIT {
     @Autowired private FlightRepository flightRepository;
     @Autowired private BookingRepository bookingRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired
+    private PaymentReconciliationService paymentReconciliationService;
 
+    @Autowired
+    private IdempotencyRecordRepository idempotencyRecordRepository;
     private Long flightId;
     private Long userId;
 
     @BeforeEach
-    void seedOneRemainingSeat() {
-        bookingRepository.deleteAll();
-        flightRepository.deleteAll();
-        userRepository.deleteAll();
+     void seedOneRemainingSeat() {
+    idempotencyRecordRepository.deleteAll();
+    bookingRepository.deleteAll();
+    flightRepository.deleteAll();
+    userRepository.deleteAll();
 
         User user = userRepository.save(
                 new User("racer@aerocore.test", "irrelevant-hash", "Race Condition", Role.USER));
@@ -154,6 +166,134 @@ class ConcurrentBookingIT {
                 .as("a rejected booking leaves no trace")
                 .hasSize(1);
     }
+
+    @Test
+@DisplayName("two concurrent declined reconciliations release seats exactly once")
+void concurrentDeclinedReconciliationReleasesSeatsExactlyOnce()
+        throws InterruptedException {
+
+    // arrange
+    Flight flight = new Flight(
+            "AI102",
+            "Air India",
+            "Delhi",
+            "Mumbai",
+            LocalTime.of(10, 0),
+            LocalTime.of(12, 15),
+            new BigDecimal("5499.00"),
+            10
+    );
+
+    flight.setAvailableSeats(8);
+    flight = flightRepository.save(flight);
+
+    Booking booking = new Booking(
+            "AT-RACE-001",
+            flight,
+            userRepository.findById(userId).orElseThrow(),
+            "Race Condition",
+            "racer@aerocore.test",
+            "9876543210",
+            2,
+            new BigDecimal("10998.00"),
+            java.time.Duration.ofMinutes(10)
+    );
+
+    booking.beginPayment();
+    booking = bookingRepository.save(booking);
+
+    IdempotencyRecord record =
+            new IdempotencyRecord("AT-RACE-001", "test-request-hash");
+
+    record.attachBooking(booking.getId());
+    idempotencyRecordRepository.save(record);
+
+    Long bookingId = booking.getId();
+    Long savedFlightId = flight.getId();
+
+    PaymentResult declined =
+            PaymentResult.declined("card declined");
+
+    AtomicInteger resolved = new AtomicInteger();
+    AtomicInteger ignored = new AtomicInteger();
+    AtomicInteger unexpected = new AtomicInteger();
+
+    CountDownLatch startLine = new CountDownLatch(1);
+    CountDownLatch finished = new CountDownLatch(2);
+
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+
+    for (int i = 0; i < 2; i++) {
+        pool.submit(() -> {
+            try {
+                startLine.await();
+
+                boolean applied =
+                        paymentReconciliationService.applyOutcome(
+                                bookingId,
+                                declined
+                        );
+
+                if (applied) {
+                    resolved.incrementAndGet();
+                } else {
+                    ignored.incrementAndGet();
+                }
+
+            } catch (Exception surprising) {
+                unexpected.incrementAndGet();
+            } finally {
+                finished.countDown();
+            }
+        });
+    }
+
+    // act
+    startLine.countDown();
+
+    assertThat(finished.await(30, TimeUnit.SECONDS))
+            .as("both reconciliation attempts finish")
+            .isTrue();
+
+    pool.shutdown();
+
+    // assert
+    assertThat(unexpected.get())
+            .as("neither reconciliation fails unexpectedly")
+            .isZero();
+
+    assertThat(resolved.get())
+            .as("exactly one reconciliation applies the declined outcome")
+            .isEqualTo(1);
+
+    assertThat(ignored.get())
+            .as("the second reconciliation sees the already-resolved booking")
+            .isEqualTo(1);
+
+    Booking finalBooking =
+            bookingRepository.findById(bookingId)
+                    .orElseThrow();
+
+    assertThat(finalBooking.getStatus())
+            .as("booking is cancelled exactly once")
+            .isEqualTo(BookingStatus.CANCELLED);
+
+    Flight finalFlight =
+            flightRepository.findById(savedFlightId)
+                    .orElseThrow();
+
+    assertThat(finalFlight.getAvailableSeats())
+            .as("the two held seats are released exactly once")
+            .isEqualTo(10);
+
+    IdempotencyRecord finalRecord =
+            idempotencyRecordRepository.findByBookingId(bookingId)
+                    .orElseThrow();
+
+    assertThat(finalRecord.isFailed())
+            .as("idempotency record is failed exactly once")
+            .isTrue();
+}
 
     private BookingRequest requestForOneSeat() {
         return new BookingRequest(flightId, "Race Condition", "racer@aerocore.test", "9876543210", 1);
