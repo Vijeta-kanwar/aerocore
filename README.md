@@ -5,7 +5,7 @@ must not be oversold when two bookings arrive together, one checkout request mus
 two charges, a payment whose outcome is never reported must not strand a seat or take money
 for a booking that no longer exists, and an operation on a booking must belong to the person
 making it.
- 
+
 The CRUD around flights and bookings is the uninteresting part. What the project is actually
 about is transaction boundaries, conditional writes, idempotency, and a state machine that
 holds when things fail halfway.
@@ -41,6 +41,11 @@ Clients send an `Idempotency-Key`. The key row and the booking commit in the sam
 transaction, so a crash rolls back both and a retry books cleanly. A replay returns the
 original response verbatim; a key reused with a different body is a 422, not a silent replay.
 
+A record has three states rather than two. A definite decline is a finished request, not an
+unfinished one, so it settles to `FAILED` and replays that failure. Only an outcome nobody
+knows yet stays `IN_PROGRESS`, because that is the one case where a later answer can still
+change what the right response was.
+
 ### A booking only moves along legal edges
 
 Five states, four legal transitions, all declared in one table on `BookingStatus`.
@@ -51,8 +56,11 @@ booking that might already have been paid for.
 
 Ownership is enforced in the service layer, the CI smoke test exercises the real stack
 against real Postgres, and the concurrency test proves the last-seat invariant under actual
-contention. What is *not* proven is listed under Known limits rather than left for someone to
-discover.
+contention. Reconciliation is proven the same way: two settlements racing on one declined
+booking return its seats exactly once. Coverage is enforced on `com.aerocore.service`
+specifically rather than on the project average, so the floor measures the code the project
+is about instead of its DTOs. What is *not* proven is listed under Known limits rather than
+left for someone to discover.
 
 ---
 
@@ -64,7 +72,8 @@ Three phases, with the transaction boundaries falling between them:
    the idempotency key. Commit.
 2. **Pay** — no transaction is open. The gateway is called with the booking reference as its
    idempotency key. This takes seconds; nothing is locked and no connection is held.
-3. **Settle** — one transaction: confirm the booking, or release the seats. Commit.
+3. **Settle** — one transaction: confirm the booking, or release the seats and record the
+   failure against the idempotency key. Commit.
 
 The seat is protected during phase 2 by a row that says `PENDING`, not by a lock. A lock
 protects for milliseconds; a state protects for minutes, survives a restart, and occupies no
@@ -75,6 +84,15 @@ one reason: the hold sweeper reclaims abandoned `PENDING` holds, and once money 
 moved, "this hold looks abandoned" stops being a safe conclusion. The sweeper never selects
 `PAYMENT_PENDING`. A separate reconciler resolves those by asking the gateway what actually
 happened.
+
+Phase 3 is therefore not the only way a booking settles. When the gateway never answers, the
+booking stays `PAYMENT_PENDING` holding its seat and the reconciler finishes the job later,
+doing exactly what checkout would have done. A charge that had in fact succeeded confirms the
+booking and completes the idempotency record — so a client retrying with its original key
+eventually receives the booking rather than the error it was handed the first time. A
+definite negative, whether declined or no such charge, cancels the booking, returns the
+seats, and marks the record `FAILED`. An answer of "still nobody knows" changes nothing at
+all, which is the only safe thing to do with it.
 
 ---
 
@@ -90,6 +108,8 @@ forced it and what it cost:
   every transaction
 - [0004](docs/adr/0004-stateless-authentication.md) — stateless JWTs across three replicas,
   and what `localStorage` costs
+- [0005](docs/adr/0005-payment-reconciliation-locking.md) — why the reconciler's candidate
+  query takes no lock while `applyOutcome` does
 
 ---
 
@@ -122,6 +142,14 @@ client "you're not allowed" when the truth is "I don't know who you are". No uni
 have caught it, because `@WithMockUser` never exercises the anonymous path. The frontend
 depends on the distinction: 401 clears the session and shows sign-in, 403 doesn't.
 
+**A status check that was not the same thing as a lock.** Reconciliation re-read a booking,
+checked it was still `PAYMENT_PENDING`, and acted. That reads like the conditional seat
+update, but it isn't: the seat update's guard lives inside the `UPDATE` itself, while this was
+a read, then an `if`, then a write, with gaps between them. Two replicas could both pass the
+check on a declined booking and both return the same seats — an oversell produced by the code
+written to settle one. The fix was a pessimistic lock on the booking, taken after the gateway
+has already answered so nothing slow happens while it is held.
+
 ---
 
 ## Known limits
@@ -131,12 +159,19 @@ depends on the distinction: 401 clears the session and shows sign-in, 403 doesn'
   state that access tokens deliberately avoid.
 - **Idempotency keys are never pruned.** The table grows without bound. A retry arriving a
   week later is a new intent, not a duplicate, so keys should expire.
+- **A key that ends in `FAILED` stays failed.** Replays return the stored failure instead of
+  attempting payment again, so a passenger who fixes a declined card must book with a new
+  idempotency key. That is the deliberate cost of treating one key as one logical request
+  with one terminal outcome, rather than as a login for the same seat.
 - **The payment gateway is a stub.** Deliberately: what needed testing was latency, declines
   and outcomes that never arrive, and a real provider hands those out on its own schedule.
   A real one must accept an idempotency key and answer questions about past charges.
-- **A payment with an unknown outcome holds its seat** until the reconciler runs — and
-  indefinitely if the gateway stays unreachable. That is the chosen direction to fail in: a
-  booking stuck for an hour beats a seat sold twice.
+- **An unknown payment outcome can hold its seat indefinitely.** There is no attempt limit
+  and no backoff, so the reconciler asks about the same booking on every run until the
+  gateway gives a definite answer, and a gateway that never recovers means a seat held
+  forever. That is the chosen direction to fail in — a booking stuck for an hour beats a seat
+  sold twice — but the missing pieces are bounded retries, backoff, and an escalation path to
+  manual resolution.
 - **One Postgres instance.** A stated single point of failure. Production would want an
   operator like CloudNativePG for replication and failover.
 - **Demo secrets are committed** so a clean clone runs. Kubernetes Secrets are base64, not
@@ -153,6 +188,11 @@ docker compose up --build
 Then open <http://localhost:8080>, register an account, and book a flight. Payment happens
 server-side inside checkout — there is no separate payment step.
 
+The stub gateway's failure rates are exposed as environment variables in `docker-compose.yml`,
+defaulted to zero. Setting `AEROCORE_PAYMENTS_DECLINE_RATE` or
+`AEROCORE_PAYMENTS_TIMEOUT_RATE` to `1.0` makes declines and unresolved payments reproducible
+on demand, which is how the reconciler is exercised by hand.
+
 ### The concurrency proof
 
 ```bash
@@ -168,9 +208,10 @@ and exactly one booking row exists.
 That last assertion is the one that matters most: nineteen threads *reporting* failure is a
 different claim from nineteen threads *leaving nothing behind*.
 
-This is an integration test rather than a Mockito test because a mock cannot contend. It can
-verify that `reserveSeats` was called; it cannot show what Postgres does when twenty
-transactions reach the same row.
+The same file proves the settlement side: two reconciliations racing on one declined booking
+release its seats exactly once. Both tests are integration tests rather than Mockito tests
+because a mock cannot contend. A mock can verify that `reserveSeats` was called; it cannot
+show what Postgres does when twenty transactions reach the same row.
 
 ### Seeing the conditional update by hand
 
@@ -190,12 +231,17 @@ The API reference is at `/swagger-ui.html` on the running application.
 
 ## Where to look
 
-- [`docs/adr`](docs/adr/) — the reasoning behind the four decisions above
+- [`docs/adr`](docs/adr/) — the reasoning behind the five decisions above
 - `BookingCheckoutService` — the three phases and where the transactions start and stop
 - `FlightRepository.reserveSeats` — the conditional update, and why `@Modifying` carries the
   flags it does
-- `ConcurrentBookingIT` — twenty threads against the last seat
+- `ConcurrentBookingIT` — twenty threads against the last seat, and two settlements against
+  one booking
 - `BookingStatus` — the transition table, including the edge that is deliberately absent
-- `HoldExpirySweeper` / `PaymentReconciler` — background work across three replicas, with
-  `SKIP LOCKED` and no coordination
+- `IdempotencyStatus` — three states, and why an unresolved payment is not a failed one
+- `HoldExpirySweeper` — reclaiming abandoned holds across three replicas, claiming rows with
+  `SKIP LOCKED` so no two workers take the same batch
+- `PaymentReconciler` / `PaymentReconciliationService` — the opposite trade: candidates are
+  selected without a lock because a gateway call follows, and the lock is taken afterwards,
+  around the settlement itself
 - `.github/workflows/ci.yml` — what is actually proven end to end
