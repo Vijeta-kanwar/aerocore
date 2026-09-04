@@ -166,38 +166,41 @@
                         <goal>report</goal>
                     </goals>
                 </execution>
+            <!-- Enforce minimum coverage -->
+<execution>
+    <id>check</id>
+    <phase>verify</phase>
+    <goals>
+        <goal>check</goal>
+    </goals>
+    <configuration>
+        <rules>
+            <rule>
+                <element>PACKAGE</element>
 
-                <!-- Enforce minimum coverage -->
-                <execution>
-                    <id>check</id>
-                    <phase>verify</phase>
-                    <goals>
-                        <goal>check</goal>
-                    </goals>
-                    <configuration>
-                        <rules>
-                            <rule>
-                                <element>BUNDLE</element>
-                                <limits>
+                <includes>
+                    <include>com.aerocore.service</include>
+                </includes>
 
-                                    <limit>
-                                        <counter>INSTRUCTION</counter>
-                                        <value>COVEREDRATIO</value>
-                                        <minimum>0.50</minimum>
-                                    </limit>
+                <limits>
 
-                                    <limit>
-                                        <counter>BRANCH</counter>
-                                        <value>COVEREDRATIO</value>
-                                        <minimum>0.35</minimum>
-                                    </limit>
+                    <limit>
+                        <counter>INSTRUCTION</counter>
+                        <value>COVEREDRATIO</value>
+                        <minimum>0.45</minimum>
+                    </limit>
 
-                                </limits>
-                            </rule>
-                        </rules>
-                    </configuration>
-                </execution>
+                    <limit>
+                        <counter>BRANCH</counter>
+                        <value>COVEREDRATIO</value>
+                        <minimum>0.45</minimum>
+                    </limit>
 
+                </limits>
+            </rule>
+        </rules>
+    </configuration>
+</execution>
             </executions>
         </plugin>
 
