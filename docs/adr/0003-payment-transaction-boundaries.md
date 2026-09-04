@@ -60,10 +60,10 @@ exchange, payment and database state are no longer one atomic operation, and the
 be arranged so that the gap between them is always recoverable.
 
 A crash between the charge and the confirmation leaves the booking in `PAYMENT_PENDING`. That
-is not a lost booking — the reconciler resolves it on its next run — but the seat is held
-until then, and if the gateway itself is unreachable it stays held indefinitely. That is the
-deliberate direction to fail in: a booking stuck for an hour is a smaller problem than a seat
-sold twice.
+is not a lost booking — the reconciler attempts to resolve it on subsequent runs — but the
+seat is held until then, and if the gateway remains unreachable or returns `UNKNOWN`, it stays
+held indefinitely under the current retry policy. That is the deliberate direction to fail in:
+a booking stuck for an hour is a smaller problem than a seat sold twice.
 
 The gateway is a stub, not a real provider. That was a choice, not a shortcut. What this
 design needs testing against is latency, declines and outcomes that never arrive, and a real

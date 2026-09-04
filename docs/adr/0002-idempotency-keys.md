@@ -50,14 +50,17 @@ the same request return two different answers.
 The idempotency record has three states:
 
 - **`IN_PROGRESS`** — the request has started but has not reached a terminal outcome.
+
 - **`COMPLETED`** — the payment and booking completed successfully and the response was
   stored.
-- **`FAILED`** — the payment received a definite decline. Seats are released, the booking
-  is cancelled, and the failure response is stored.
 
-A definite payment decline is therefore terminal and is persisted as `FAILED`. A retry with
-the same idempotency key replays the same stored failure rather than attempting payment
-again.
+- **`FAILED`** — the payment received a terminal negative outcome (`DECLINED` or
+  `NOT_FOUND`). Seats are released, the booking is cancelled, and the failure response is
+  stored.
+
+A terminal negative payment outcome (`DECLINED` or `NOT_FOUND`) is therefore persisted as
+`FAILED`. A retry with the same idempotency key replays the same stored failure rather than
+attempting payment again.
 
 An unknown payment outcome is deliberately different. If the gateway cannot confirm
 whether the payment succeeded, the request remains `IN_PROGRESS`. Seats are not released
@@ -87,8 +90,8 @@ Returning 422 rather than replaying makes a client bug visible immediately inste
 producing a confusing success. The rule of thumb it follows: fail quietly on network
 errors, loudly on programmer errors.
 
-Persisting definite payment declines as `FAILED` makes the failure itself idempotent:
-retries do not charge the customer again and receive the same failure response.
+Persisting terminal negative payment outcomes as `FAILED` makes the failure itself
+idempotent: retries do not charge the customer again and receive the same failure response.
 
 Keeping unknown payment outcomes as `IN_PROGRESS` avoids incorrectly releasing seats or
 declaring a payment failed when the payment provider may have accepted the charge. The
@@ -102,8 +105,9 @@ Two things remain deliberately unfinished. The `idempotency_keys` table grows wi
 bound — nothing prunes it, and a retry arriving a week later is a new intent rather than a
 duplicate, so keys should eventually expire.
 
-Unknown payment outcomes also require a reconciliation mechanism that can query the payment
-provider and move the corresponding `IN_PROGRESS` record to its final state.
+Unknown payment outcomes are handled by the reconciliation mechanism, which queries the
+payment provider and moves the corresponding `IN_PROGRESS` record to its final state when
+the provider gives a definite outcome.
 
-The project also has a JaCoCo coverage gate so future changes cannot reduce overall
-instruction coverage below 50% or branch coverage below 35%.
+The project also has a JaCoCo coverage gate for the `com.aerocore.service` package. Future
+changes must maintain at least 45% instruction coverage and 45% branch coverage.
