@@ -47,20 +47,27 @@ public PaymentReconciliationService(BookingRepository bookingRepository,
 
 
     /**
-     * Applies what the gateway told us, if the booking is still waiting to hear it.
-     *
-     * <p>The status re-check is the whole concurrency story. Two replicas can look up the same
-     * reference at the same moment and both come back with SUCCEEDED -- lookups are reads, so
-     * nothing stops them. The first one to get here confirms the booking; the second finds it
-     * is no longer PAYMENT_PENDING and does nothing. Same guard as the conditional seat update:
-     * the state decides, not a lock.
-     *
-     * <p>We accept those duplicate lookups on purpose. The alternative is holding a row lock
-     * across a network call to a third party, which is precisely the trade checkout refuses.
-     */
+ * Applies what the gateway told us, if the booking is still waiting to hear it.
+ *
+ * <p>Two replicas can look up the same reference at the same moment and both come back
+ * with the same answer -- lookups are reads, so nothing stops them. What stops them here
+ * is the row lock. The first to arrive holds the booking until it commits; the second
+ * then reads a row that is no longer PAYMENT_PENDING and does nothing.
+ *
+ * <p>The status check alone was not enough, and it took a while to see why. Checkout's
+ * conditional update gets away without a lock because its guard lives inside the UPDATE
+ * itself. This is a read, then an if, then a write, and two replicas can both pass the if.
+ * On the declined path that means releasing the same seats twice -- an oversell produced
+ * by the code meant to prevent one.
+ *
+ * <p>Locking here does not contradict the rule the reconciler is built around. The
+ * forbidden thing is a lock held across a call to someone else's service, and by the time
+ * we reach this method that call has already returned.
+ */
     @Transactional
     public boolean applyOutcome(Long bookingId, PaymentResult result) {
-        Optional<Booking> found = bookingRepository.findById(bookingId);
+        Optional<Booking> found =
+        bookingRepository.findBookingByIdForUpdate(bookingId);
         if (found.isEmpty()) {
             return false;
         }

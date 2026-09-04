@@ -5,6 +5,7 @@ import com.aerocore.model.Booking;
 import java.math.BigDecimal;
 import java.time.Instant;
 
+
 public record BookingResponse(
         Long id,
         String reference,

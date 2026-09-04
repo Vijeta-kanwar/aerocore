@@ -25,6 +25,9 @@ services:
       context: .
     container_name: aerocore-app
     environment:
+      # Stub payment failure rates; keep disabled by default, override when testing.
+      AEROCORE_PAYMENTS_DECLINE_RATE: "0.0"
+      AEROCORE_PAYMENTS_TIMEOUT_RATE: "0.0"
       DB_URL: jdbc:postgresql://db:5432/aerocore
       DB_USERNAME: aerocore
       DB_PASSWORD: aerocore

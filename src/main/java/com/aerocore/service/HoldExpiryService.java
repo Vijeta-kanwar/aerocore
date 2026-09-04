@@ -46,6 +46,7 @@ public class HoldExpiryService {
      * a connection isn't tied up while fifty thousand rows go through.
      */
     @Transactional
+    // Lock order is deliberately Booking → Flight, matching payment reconciliation.
     public int expireBatch(int batchSize) {
         List<Booking> holds = bookingRepository.claimExpiredHolds(Instant.now(), batchSize);
 

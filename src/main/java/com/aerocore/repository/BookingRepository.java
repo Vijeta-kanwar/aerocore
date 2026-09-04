@@ -6,6 +6,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
+
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -58,4 +61,15 @@ List<Booking> claimExpiredHolds(@Param("now") Instant now, @Param("batchSize") i
          ORDER BY b.bookedAt
         """)
 List<Booking> findUnresolvedPayments(@Param("cutoff") Instant cutoff, Pageable pageable);
+
+/**
+ * Loads a booking for a write that must not race another replica.
+ *
+ * <p>The candidate query above deliberately takes no lock, because a gateway call follows it.
+ * This one is the opposite situation: the gateway has already answered, so the lock is held
+ * for a few milliseconds of local work and nothing more.
+ */
+@Lock(LockModeType.PESSIMISTIC_WRITE)
+@Query("SELECT b FROM Booking b WHERE b.id = :id")
+Optional<Booking> findBookingByIdForUpdate(@Param("id") Long id);
 }

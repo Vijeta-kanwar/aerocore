@@ -2,13 +2,14 @@ package com.aerocore;
 
 import com.aerocore.model.Booking;
 import com.aerocore.model.Flight;
+import com.aerocore.model.Role;
+import com.aerocore.model.User;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalTime;
-import com.aerocore.model.User;
-import com.aerocore.model.Role;
+
 /**
  * Builders for test data. Ids are set reflectively because they are database-assigned.
  */
@@ -44,12 +45,13 @@ public final class TestFixtures {
                 .multiply(BigDecimal.valueOf(seats));
 
         String reference = "AT-TEST-" + id;
+
         User user = new User(
-    "vijeta@example.com",
-    "test-password",
-    "Vijeta Kanwar",
-    Role.USER
-);
+                "vijeta@example.com",
+                "test-password",
+                "Vijeta Kanwar",
+                Role.USER
+        );
 
         Booking booking = new Booking(
                 reference,
@@ -64,6 +66,7 @@ public final class TestFixtures {
         );
 
         ReflectionTestUtils.setField(user, "id", 1L);
+        ReflectionTestUtils.setField(booking, "id", id);
 
         return booking;
     }
